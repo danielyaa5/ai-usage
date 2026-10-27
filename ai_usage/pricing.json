@@ -1,0 +1,42 @@
+{
+  "_about": "API list prices in US dollars per million tokens, used to show what subscription usage would cost on a pay-per-token API key. Edit freely; the server reloads this file on change. Models match by longest id prefix, so 'claude-opus-5-5' covers 'claude-opus-5-5[1m]'. cache_write_1h defaults to 2x input and cache_write to 1.25x input when omitted.",
+  "checked": "2026-10-26",
+  "sources": {
+    "anthropic": "Claude API skill price table (cached 2026-10-06); matches Claude Code's own cost reports",
+    "openai": "third-party aggregators (eesel.ai, anotherwrapper.com, letsdatascience.com), Oct 2026; OpenAI's page not quoted directly",
+    "google": "third-party aggregators (eesel.ai, activepieces.com, mindstudio.ai), Oct 2026; Gemini 4 Argon is on an introductory $2/$10 rate until 2026-11-30, then $4/$20"
+  },
+  "models": {
+    "claude-fable-5-1": {"input": 10.0, "output": 50.0, "cache_read": 0.25},
+    "claude-mythos-5-1": {"input": 10.0, "output": 50.0, "cache_read": 0.25},
+    "claude-fable-5": {"input": 10.0, "output": 50.0, "cache_read": 1.0},
+    "claude-opus-5-5": {"input": 4.0, "output": 20.0, "cache_read": 0.2, "fast_multiplier": 2.0},
+    "claude-opus-5": {"input": 5.0, "output": 25.0, "cache_read": 0.5, "fast_multiplier": 2.0},
+    "claude-opus-4-8": {"input": 5.0, "output": 25.0, "cache_read": 0.5},
+    "claude-opus-4-7": {"input": 5.0, "output": 25.0, "cache_read": 0.5},
+    "claude-opus-4-6": {"input": 5.0, "output": 25.0, "cache_read": 0.5},
+    "claude-sonnet-5-5": {"input": 2.0, "output": 10.0, "cache_read": 0.2},
+    "claude-sonnet-5": {"input": 2.0, "output": 10.0, "cache_read": 0.2},
+    "claude-sonnet-4-6": {"input": 3.0, "output": 15.0, "cache_read": 0.3},
+    "claude-sonnet-4-5": {"input": 3.0, "output": 15.0, "cache_read": 0.3},
+    "claude-haiku-5-5": {"input": 0.1, "output": 0.5, "cache_read": 0.01},
+    "claude-haiku-4-5": {"input": 1.0, "output": 5.0, "cache_read": 0.1},
+    "gpt-6-astra": {"input": 10.0, "output": 50.0, "cache_read": 1.0, "cache_write": 12.5},
+    "gpt-6.1-sol": {"input": 2.0, "output": 10.0, "cache_read": 0.2},
+    "gpt-6-sol": {"input": 2.0, "output": 10.0, "cache_read": 0.2},
+    "gpt-6-luna": {"input": 0.1, "output": 0.5, "cache_read": 0.01},
+    "gemini-4-argon": {"input": 2.0, "output": 10.0, "cache_read": 0.2},
+    "gemini-3.8-flash": {"input": 0.75, "output": 3.75, "cache_read": 0.075}
+  },
+  "aliases": {
+    "opus": "claude-opus-5-5",
+    "sonnet": "claude-sonnet-5-5",
+    "haiku": "claude-haiku-5-5",
+    "fable": "claude-fable-5-1"
+  },
+  "plans": {
+    "Claude Max 20x": {"vendor": "anthropic", "monthly_usd": 200, "note": "main Claude account; limits are shared with every device on it"},
+    "ChatGPT Pro": {"vendor": "openai", "monthly_usd": 200, "note": "plan_type pro, as reported by Codex"},
+    "Google (Antigravity)": {"vendor": "google", "monthly_usd": null, "note": "Antigravity credits; set monthly_usd to your Google AI plan price"}
+  }
+}

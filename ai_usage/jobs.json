@@ -1,0 +1,29 @@
+{
+  "_about": "How usage is attributed to jobs. Telemetry from a job's LaunchAgent carries OTEL_RESOURCE_ATTRIBUTES ai_usage.job=<name>. Logged sessions are matched by their first prompt, then by working folder. The first matching rule wins. {name} in a job takes the regex group of that name, title-cased.",
+  "telemetry_attribute": "ai_usage.job",
+  "telemetry_jobs": {
+    "ai-trader": "ai-trader",
+    "ai-trader-health": "ai-trader",
+    "ai-trader-watchdog": "ai-trader",
+    "price-watch": "price-watch",
+    "m2-server-page": "M2 server page (Reply Radar, Price Watch research)",
+    "ai-usage-probe": "Usage dashboard (limit probe)"
+  },
+  "prompt_rules": [
+    {"contains": "TELEMETRY_JSON", "job": "ai-trader", "detail": "health monitor"},
+    {"regex": "^This is an automated (?:scheduled |daily )?run of (?:the )?(?P<name>[^.]+?)(?: \\(|\\.|$)", "job": "Scheduled: {name}"},
+    {"startswith": "CRITICAL INSTRUCTION: Do NOT call any tools", "job": "ai-trader", "detail": "trade proposals and review"},
+    {"startswith": "CRITICAL INSTRUCTION: Do NOT run any shell commands", "job": "ai-trader", "detail": "trade review"},
+    {"contains": "Search US sellers and stores for these watches", "job": "price-watch", "detail": "Claude research"}
+  ],
+  "cwd_rules": [
+    {"prefix": "~/Developer/ai-trader", "job": "ai-trader"},
+    {"prefix": "~/Developer/price-watch", "job": "price-watch"},
+    {"prefix": "~/Developer/m2-server/m2-server-page", "job": "M2 server page (Reply Radar, Price Watch research)"}
+  ],
+  "scheduled_names": {
+    "morning-brief-m2-test": "Morning Brief (M2 test)",
+    "photo-review-reply-finder-m2-test": "Photo Review Reply Finder (M2 test)",
+    "website-metrics-update": "Website Metrics Update"
+  }
+}

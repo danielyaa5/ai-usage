@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Usage</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="viz-root">
+  <header class="top">
+    <div class="title">
+      <h1>AI usage</h1>
+      <p class="sub">Claude, ChatGPT and Gemini on <span id="host">my-mac</span> · <span id="updated">loading…</span></p>
+    </div>
+    <div class="controls" role="group" aria-label="Time range">
+      <button type="button" data-range="today">Today</button>
+      <button type="button" data-range="7d">7 days</button>
+      <button type="button" data-range="30d">30 days</button>
+      <button type="button" data-range="all">All</button>
+    </div>
+  </header>
+
+  <div id="error" class="banner" hidden></div>
+
+  <section aria-labelledby="limits-h">
+    <h2 id="limits-h">Plan limits</h2>
+    <div id="plans" class="plans"></div>
+  </section>
+
+  <section aria-labelledby="totals-h">
+    <h2 id="totals-h">This period on the M2</h2>
+    <div id="tiles" class="tiles"></div>
+  </section>
+
+  <section aria-labelledby="chart-h" class="card chart-card">
+    <div class="card-head">
+      <h2 id="chart-h">API-equivalent cost by plan</h2>
+      <div class="controls small" role="group" aria-label="Chart measure">
+        <button type="button" data-metric="cost" aria-pressed="true">Cost</button>
+        <button type="button" data-metric="tokens">Tokens</button>
+        <button type="button" id="chart-table-toggle">Table</button>
+      </div>
+    </div>
+    <div id="legend" class="legend"></div>
+    <div id="chart" class="chart" aria-describedby="chart-note"></div>
+    <div id="chart-table" class="table-wrap" hidden></div>
+    <p id="chart-note" class="note">What these requests would cost on pay-per-token API keys. Your subscriptions are flat-rate, so this is value used, not money spent.</p>
+  </section>
+
+  <section aria-labelledby="jobs-h" class="card">
+    <div class="card-head">
+      <h2 id="jobs-h">By job and app</h2>
+      <label class="check"><input type="checkbox" id="automated-only"> Background jobs only</label>
+    </div>
+    <div id="jobs" class="table-wrap"></div>
+  </section>
+
+  <section aria-labelledby="models-h" class="card">
+    <h2 id="models-h">By model</h2>
+    <div id="models" class="table-wrap"></div>
+  </section>
+
+  <section aria-labelledby="recent-h" class="card">
+    <h2 id="recent-h">Latest requests</h2>
+    <div id="recent" class="table-wrap"></div>
+  </section>
+
+  <section aria-labelledby="about-h" class="card about">
+    <h2 id="about-h">Where the numbers come from</h2>
+    <div id="sources"></div>
+    <ul class="notes">
+      <li>Usage made on this Mac only. Plan limits are account-wide, so they include your other devices.</li>
+      <li>Claude Code and Codex sessions are read from their logs; Antigravity from its conversation files. Calls that save no log (ai-trader's and price-watch's <code>claude -p</code> and <code>codex exec</code>) are counted through local telemetry from the time it was switched on.</li>
+      <li>The Claude limit is read with a one-word Haiku request every 20 minutes. ChatGPT limits come from the latest Codex session, so they are as fresh as your last Codex use. Antigravity does not expose its credit balance.</li>
+      <li id="pricing-note"></li>
+    </ul>
+  </section>
+  <div id="tooltip" class="tooltip" role="status" hidden></div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
