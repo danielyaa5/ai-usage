@@ -96,7 +96,8 @@ def install_dashboard():
         'RunAtLoad': True,
         'KeepAlive': True,
         'ThrottleInterval': 10,
-        'ProcessType': 'Background',
+        # Standard, not Background: under heavy load macOS starved a Background agent until the page stopped updating.
+        'ProcessType': 'Standard',
         'StandardOutPath': str(LOG),
         'StandardErrorPath': str(LOG),
     }
