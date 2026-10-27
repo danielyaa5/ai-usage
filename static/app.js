@@ -83,6 +83,11 @@ function render() {
   const d = state.data;
   $('#host').textContent = d.host;
   $('#updated').textContent = 'logs read ' + ago(d.status.last_scan);
+  const lag = Date.now() / 1000 - (d.status.last_scan || 0);
+  if (lag > 300) {
+    $('#error').hidden = false;
+    $('#error').textContent = `Usage data is ${ago(d.status.last_scan).replace(' ago', '')} old. The collector on the M2 is behind, usually because the Mac is overloaded; it restarts itself if scans stop for 15 minutes.`;
+  }
   document.querySelectorAll('[data-range]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.range === state.range)));
   document.querySelectorAll('[data-metric]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.metric === state.metric)));
   $('#chart-table-toggle').setAttribute('aria-pressed', String(state.showTable));

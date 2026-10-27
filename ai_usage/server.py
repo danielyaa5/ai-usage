@@ -12,6 +12,7 @@ import argparse
 import gzip
 import json
 import logging
+import os
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -155,7 +156,11 @@ def otel_env(port, job):
             'OTEL_LOGS_EXPORT_INTERVAL': '2000', 'OTEL_RESOURCE_ATTRIBUTES': f'ai_usage.job={job}'}
 
 
-def worker(db_path, scan_interval, probe_interval, otel_port, quota_interval=300):
+_beat = {'scan': time.time()}
+
+
+def worker(db_path, scan_interval):
+    """Rescan the tools' logs every scan_interval seconds."""
     db = store.connect(db_path, init=False)
     while True:
         started = time.time()
@@ -165,6 +170,14 @@ def worker(db_path, scan_interval, probe_interval, otel_port, quota_interval=300
             store.set_kv(db, 'scan_result', result)
         except Exception:
             log.exception('scan failed')
+        _beat['scan'] = time.time()
+        time.sleep(max(5, scan_interval - (time.time() - started)))
+
+
+def pollers(db_path, probe_interval, otel_port, quota_interval):
+    """Plan-limit reads run apart from the scans, so a slow probe never holds up fresh usage."""
+    db = store.connect(db_path, init=False)
+    while True:
         if probe_interval and probe.due(db, probe_interval):
             try:
                 probe.run(db, otel_env(otel_port, 'ai-usage-probe'))
@@ -175,7 +188,17 @@ def worker(db_path, scan_interval, probe_interval, otel_port, quota_interval=300
                 antigravity_quota.poll(db)
             except Exception:
                 log.exception('Antigravity quota poll failed')
-        time.sleep(max(5, scan_interval - (time.time() - started)))
+        time.sleep(30)
+
+
+def watchdog(limit):
+    """Exit when scans have stalled, so launchd starts a fresh process."""
+    while True:
+        time.sleep(60)
+        stalled = time.time() - _beat['scan']
+        if stalled > limit:
+            log.error('no completed scan for %d s; exiting for launchd to restart', stalled)
+            os._exit(1)
 
 
 def main():
@@ -195,8 +218,10 @@ def main():
     collector = ThreadingHTTPServer(('127.0.0.1', args.otlp_port), Collector)
     dashboard = ThreadingHTTPServer((args.host, args.port), Dashboard)
     threading.Thread(target=collector.serve_forever, daemon=True, name='otlp').start()
-    threading.Thread(target=worker, args=(args.db, args.scan_interval, args.probe_interval, args.otlp_port, args.quota_interval),
-                     daemon=True, name='worker').start()
+    threading.Thread(target=worker, args=(args.db, args.scan_interval), daemon=True, name='worker').start()
+    threading.Thread(target=pollers, args=(args.db, args.probe_interval, args.otlp_port, args.quota_interval),
+                     daemon=True, name='pollers').start()
+    threading.Thread(target=watchdog, args=(max(900, args.scan_interval * 10),), daemon=True, name='watchdog').start()
     log.info('dashboard on %s:%s, OTLP on 127.0.0.1:%s', args.host, args.port, args.otlp_port)
     dashboard.serve_forever()
 
