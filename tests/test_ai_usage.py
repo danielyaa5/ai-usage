@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
-from ai_usage import antigravity_quota, jobs, pricing, probe, protowire, report, server, sources, store, telemetry
+from ai_usage import antigravity_quota, codex_limits, jobs, pricing, probe, protowire, report, server, sources, store, telemetry
 
 
 def varint(n):
@@ -244,6 +244,16 @@ class AntigravityQuotaTest(Base):
                           ('Claude and GPT models', '5-hour', 0.0)])
         self.assertEqual(limits[0]['plan'], 'Google AI Ultra')
         self.assertEqual(limits[0]['resets_at'], int(datetime(2026, 10, 27, 15, 33, 31, tzinfo=timezone.utc).timestamp()))
+
+
+class CodexLimitsTest(Base):
+    def test_newer_reading_replaces_session_log_value(self):
+        store.put_limit(self.db, 'openai', 'codex_primary', 16.0, 1793600101, 'pro', {'window_minutes': 10080}, observed_at=100)
+        result = {'rateLimitsByLimitId': {'codex': {'limitId': 'codex', 'planType': 'pro', 'secondary': None,
+                                                    'primary': {'usedPercent': 25, 'windowDurationMins': 10080, 'resetsAt': 1793600101}}}}
+        self.assertEqual(codex_limits.record(self.db, result, observed_at=200), 1)
+        limit = [l for l in report.limits(self.db) if l['vendor'] == 'openai'][0]
+        self.assertEqual((limit['label'], limit['used_pct'], limit['observed_at']), ('Weekly', 25.0, 200))
 
 
 class StoreTest(Base):

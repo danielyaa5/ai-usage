@@ -23,6 +23,7 @@ Open `http://my-mac.local:8796` from the home network or Tailscale.
 | Antigravity | `~/.gemini/antigravity{,-cli}/conversations/*.db` | Protobuf blobs decoded by `ai_usage/protowire.py` |
 | No-log calls | OTLP/HTTP JSON on `127.0.0.1:4318` | `claude -p --no-session-persistence` and `codex exec --ephemeral` save nothing on disk |
 | Claude limits | `claude -p --output-format stream-json` | A one-word Haiku request every 20 minutes returns a `rate_limit_event` |
+| ChatGPT limits | `codex app-server` | `account/rateLimits/read` every 10 minutes; no model usage. Session logs only hold limits as of the last Codex request on this Mac |
 | Antigravity limits | the running Antigravity app's `language_server` | `RetrieveUserQuotaSummary` on its loopback port every 5 minutes: 5-hour and weekly buckets for the Gemini group and the Claude/GPT-OSS group; `GetUserStatus` names the tier. No model usage |
 
 Nothing reads credentials or sign-in tokens. The Antigravity reader takes the language server's

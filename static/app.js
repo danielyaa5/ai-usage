@@ -130,6 +130,7 @@ function renderPlans(d) {
         : '<p class="muted">No limit reading yet.</p>';
     }
     if (meta.vendor === 'anthropic' && d.status.probe_error) body += `<p class="status warning">${ICONS.warning} Probe: ${esc(d.status.probe_error)}</p>`;
+    if (meta.vendor === 'openai' && d.status.codex_limits_error) body += `<p class="status warning">${ICONS.warning} ${esc(d.status.codex_limits_error)}</p>`;
     if (meta.vendor === 'google' && d.status.antigravity_quota_error) body += `<p class="status warning">${ICONS.warning} ${esc(d.status.antigravity_quota_error)}</p>`;
     const title = meta.vendor === 'google' && d.status.antigravity_tier ? `${d.status.antigravity_tier} (Antigravity)` : name;
     const value = plan.cost || 0;

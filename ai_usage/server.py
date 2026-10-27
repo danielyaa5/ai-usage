@@ -5,8 +5,8 @@ Two listeners:
   * the dashboard (default 0.0.0.0:8796), read-only, answering only home-network, Tailscale and
     loopback clients;
   * an OTLP/HTTP JSON receiver on 127.0.0.1:4318 for Claude Code and Codex telemetry.
-A worker thread rescans the tools' local logs every minute, probes Claude's plan limits and reads
-Antigravity's from the running Antigravity app.
+A worker thread rescans the tools' local logs every minute, probes Claude's plan limits, asks
+Codex for ChatGPT's and reads Antigravity's from the running Antigravity app.
 """
 import argparse
 import gzip
@@ -20,7 +20,7 @@ from ipaddress import ip_address, ip_network
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from . import antigravity_quota, probe, report, sources, store, telemetry
+from . import antigravity_quota, codex_limits, probe, report, sources, store, telemetry
 
 STATIC = Path(__file__).resolve().parents[1] / 'static'
 TAILSCALE = ip_network('100.64.0.0/10')
@@ -174,7 +174,7 @@ def worker(db_path, scan_interval):
         time.sleep(max(5, scan_interval - (time.time() - started)))
 
 
-def pollers(db_path, probe_interval, otel_port, quota_interval):
+def pollers(db_path, probe_interval, otel_port, quota_interval, codex_interval=600):
     """Plan-limit reads run apart from the scans, so a slow probe never holds up fresh usage."""
     db = store.connect(db_path, init=False)
     while True:
@@ -188,6 +188,11 @@ def pollers(db_path, probe_interval, otel_port, quota_interval):
                 antigravity_quota.poll(db)
             except Exception:
                 log.exception('Antigravity quota poll failed')
+        if codex_interval and codex_limits.due(db, codex_interval):
+            try:
+                codex_limits.poll(db)
+            except Exception:
+                log.exception('Codex limit read failed')
         time.sleep(30)
 
 
@@ -209,6 +214,7 @@ def main():
     parser.add_argument('--scan-interval', type=int, default=60)
     parser.add_argument('--probe-interval', type=int, default=1200, help='seconds between Claude limit probes; 0 disables')
     parser.add_argument('--quota-interval', type=int, default=300, help='seconds between Antigravity quota reads; 0 disables')
+    parser.add_argument('--codex-interval', type=int, default=600, help='seconds between ChatGPT limit reads; 0 disables')
     parser.add_argument('--db', help='SQLite path (default ~/Library/Application Support/ai-usage/usage.sqlite)')
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
@@ -219,7 +225,7 @@ def main():
     dashboard = ThreadingHTTPServer((args.host, args.port), Dashboard)
     threading.Thread(target=collector.serve_forever, daemon=True, name='otlp').start()
     threading.Thread(target=worker, args=(args.db, args.scan_interval), daemon=True, name='worker').start()
-    threading.Thread(target=pollers, args=(args.db, args.probe_interval, args.otlp_port, args.quota_interval),
+    threading.Thread(target=pollers, args=(args.db, args.probe_interval, args.otlp_port, args.quota_interval, args.codex_interval),
                      daemon=True, name='pollers').start()
     threading.Thread(target=watchdog, args=(max(900, args.scan_interval * 10),), daemon=True, name='watchdog').start()
     log.info('dashboard on %s:%s, OTLP on 127.0.0.1:%s', args.host, args.port, args.otlp_port)

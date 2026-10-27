@@ -145,5 +145,6 @@ def summary(db, range_name='7d', now=None):
                     telemetry_last=get_kv(db, 'telemetry_last'), telemetry_count=get_kv(db, 'telemetry_count', 0),
                     antigravity_tier=get_kv(db, 'antigravity_tier'),
                     antigravity_quota_last=get_kv(db, 'antigravity_quota_last'),
-                    antigravity_quota_error=get_kv(db, 'antigravity_quota_error')),
+                    antigravity_quota_error=get_kv(db, 'antigravity_quota_error'),
+                    codex_limits_error=get_kv(db, 'codex_limits_error')),
         pricing=dict(checked=table.get('checked'), sources=table.get('sources')))
