@@ -53,6 +53,9 @@ def limit_label(vendor, name, extra):
         if minutes == 10080:
             return 'Weekly'
         return f'{round(minutes / 60)}-hour' if minutes else name.replace('codex_', '').title()
+    if vendor == 'google':
+        window = (extra or {}).get('window')
+        return {'5h': '5-hour', 'weekly': 'Weekly'}.get(window, str(window or name).title())
     return WINDOW_LABELS.get(name, name.replace('_', ' ').title())
 
 
@@ -61,8 +64,11 @@ def limits(db):
     for row in db.execute('SELECT * FROM limits ORDER BY vendor, window'):
         extra = json.loads(row['extra'] or '{}')
         out.append(dict(vendor=row['vendor'], window=row['window'], label=limit_label(row['vendor'], row['window'], extra),
-                        used_pct=row['used_pct'], resets_at=row['resets_at'], observed_at=row['observed_at'],
-                        plan=row['plan'], extra=extra))
+                        group=extra.get('group'), used_pct=row['used_pct'], resets_at=row['resets_at'],
+                        observed_at=row['observed_at'], plan=row['plan'], extra=extra))
+    # Shortest window first within each group, groups in the order the tool lists them.
+    span = {'5-hour': 0, 'Weekly': 1}
+    out.sort(key=lambda l: (l['vendor'], l['extra'].get('order', 0), span.get(l['label'], 2), l['label']))
     return out
 
 
@@ -136,5 +142,8 @@ def summary(db, range_name='7d', now=None):
         recent=recent, limits=limits(db), sources=sources,
         status=dict(last_scan=get_kv(db, 'last_scan'), scan_result=get_kv(db, 'scan_result'),
                     probe_last=get_kv(db, 'probe_last'), probe_error=get_kv(db, 'probe_error'),
-                    telemetry_last=get_kv(db, 'telemetry_last'), telemetry_count=get_kv(db, 'telemetry_count', 0)),
+                    telemetry_last=get_kv(db, 'telemetry_last'), telemetry_count=get_kv(db, 'telemetry_count', 0),
+                    antigravity_tier=get_kv(db, 'antigravity_tier'),
+                    antigravity_quota_last=get_kv(db, 'antigravity_quota_last'),
+                    antigravity_quota_error=get_kv(db, 'antigravity_quota_error')),
         pricing=dict(checked=table.get('checked'), sources=table.get('sources')))

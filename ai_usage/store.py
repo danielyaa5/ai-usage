@@ -77,24 +77,24 @@ def connect(path=None, init=True):
     return db
 
 
-def put_events(db, events, prefer_new=False):
-    """Insert events. When an id already exists, the row with more output tokens wins (Claude Code writes a
-    message once per content block, and later copies carry the final count). With prefer_new, a duplicate
-    from another source only fills in a job or detail the stored row lacks."""
+def put_events(db, events):
+    """Insert events. A repeat of an id from the same source refreshes its job and detail (the attribution
+    rules may have changed) and keeps the larger token counts (Claude Code writes a message once per
+    content block, and later copies carry the final count). The same request seen by another source
+    (transcript and telemetry) keeps the stored numbers and takes whichever attribution is more specific."""
     if not events:
         return 0
     tokens = ('input', 'cache_read', 'cache_write', 'output', 'reasoning')
     rows = [tuple((e.get(c) or 0) if c in tokens else e.get(c) for c in EVENT_COLUMNS) for e in events]
     placeholders = ','.join('?' * len(EVENT_COLUMNS))
-    updates = ','.join(f'{c}=excluded.{c}' for c in EVENT_COLUMNS if c != 'id')
+    numbers = tokens + ('cost_usd', 'cost_basis', 'speed')
+    updates = ','.join(['job=excluded.job', 'detail=excluded.detail'] + [
+        f'{c}=CASE WHEN excluded.output > events.output THEN excluded.{c} ELSE events.{c} END' for c in numbers])
     with _lock:
         before = db.total_changes
         db.executemany(
             f'INSERT INTO events ({",".join(EVENT_COLUMNS)}) VALUES ({placeholders}) '
-            f'ON CONFLICT(id) DO UPDATE SET {updates} WHERE excluded.output > events.output '
-            f'AND excluded.source = events.source', rows)
-        # Same request seen by another source (transcript and telemetry): keep the stored numbers and take
-        # whichever attribution is more specific.
+            f'ON CONFLICT(id) DO UPDATE SET {updates} WHERE excluded.source = events.source', rows)
         db.executemany(
             'UPDATE events SET job=?, detail=COALESCE(detail, ?) WHERE id=? AND source<>? AND job LIKE ?',
             [(e['job'], e.get('detail'), e['id'], e['source'], '% (interactive)') for e in events

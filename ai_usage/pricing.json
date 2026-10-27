@@ -37,6 +37,6 @@
   "plans": {
     "Claude Max 20x": {"vendor": "anthropic", "monthly_usd": 200, "note": "main Claude account; limits are shared with every device on it"},
     "ChatGPT Pro": {"vendor": "openai", "monthly_usd": 200, "note": "plan_type pro, as reported by Codex"},
-    "Google (Antigravity)": {"vendor": "google", "monthly_usd": null, "note": "Antigravity credits; set monthly_usd to your Google AI plan price"}
+    "Google (Antigravity)": {"vendor": "google", "monthly_usd": 99.99, "note": "Google AI Ultra, as Antigravity reports the tier. Ultra has $99.99 and $199.99 US tiers since May 2026; Antigravity offers an upgrade to a higher Ultra plan, so this assumes $99.99. Edit if your bill differs."}
   }
 }

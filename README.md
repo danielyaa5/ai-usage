@@ -23,12 +23,18 @@ Open `http://my-mac.local:8796` from the home network or Tailscale.
 | Antigravity | `~/.gemini/antigravity{,-cli}/conversations/*.db` | Protobuf blobs decoded by `ai_usage/protowire.py` |
 | No-log calls | OTLP/HTTP JSON on `127.0.0.1:4318` | `claude -p --no-session-persistence` and `codex exec --ephemeral` save nothing on disk |
 | Claude limits | `claude -p --output-format stream-json` | A one-word Haiku request every 20 minutes returns a `rate_limit_event` |
+| Antigravity limits | the running Antigravity app's `language_server` | `RetrieveUserQuotaSummary` on its loopback port every 5 minutes: 5-hour and weekly buckets for the Gemini group and the Claude/GPT-OSS group; `GetUserStatus` names the tier. No model usage |
 
-Nothing reads credentials. Logs are read incrementally once a minute and never modified. Prompts are
-not stored; Claude Code and Codex redact them from telemetry by default.
+Nothing reads credentials or sign-in tokens. The Antigravity reader takes the language server's
+per-process CSRF token from the process list and sends it only back to that process's loopback port;
+it is never stored or logged, and the name and email in its replies are discarded. Logs are read
+incrementally once a minute and never modified. Prompts are not stored; Claude Code and Codex
+redact them from telemetry by default. Antigravity limits refresh only while the Antigravity app (or
+an `agy` run) is open on this Mac.
 
 Jobs are attributed by telemetry resource attribute, first prompt, or working folder, using
-`ai_usage/jobs.json`. API prices live in `ai_usage/pricing.json`; both reload on change.
+`ai_usage/jobs.json`. Editing it makes the next scan read every log again, so stored events take the
+new rules. API prices and plan prices live in `ai_usage/pricing.json`; both reload on change.
 
 ## Install
 

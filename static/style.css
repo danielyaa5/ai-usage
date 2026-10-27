@@ -106,6 +106,7 @@ code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; background: va
 .swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; }
 .plan-head .price { margin-left: auto; color: var(--text-muted); font-size: 12px; }
 .meter { margin: 10px 0; }
+.group { margin: 12px 0 -4px; font-size: 12px; font-weight: 600; color: var(--text-secondary); }
 .meter-top { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
 .meter-top .pct { font-weight: 600; }
 .meter-track { position: relative; height: 8px; border-radius: 4px; background: var(--meter-track); margin-top: 5px; overflow: hidden; }

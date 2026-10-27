@@ -5,7 +5,8 @@ Two listeners:
   * the dashboard (default 0.0.0.0:8796), read-only, answering only home-network, Tailscale and
     loopback clients;
   * an OTLP/HTTP JSON receiver on 127.0.0.1:4318 for Claude Code and Codex telemetry.
-A worker thread rescans the tools' local logs every minute and probes Claude's plan limits.
+A worker thread rescans the tools' local logs every minute, probes Claude's plan limits and reads
+Antigravity's from the running Antigravity app.
 """
 import argparse
 import gzip
@@ -18,7 +19,7 @@ from ipaddress import ip_address, ip_network
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from . import probe, report, sources, store, telemetry
+from . import antigravity_quota, probe, report, sources, store, telemetry
 
 STATIC = Path(__file__).resolve().parents[1] / 'static'
 TAILSCALE = ip_network('100.64.0.0/10')
@@ -60,6 +61,8 @@ class Handler(BaseHTTPRequestHandler):
         self.db = store.connect(self.db_path, init=False)
         try:
             super().handle_one_request()
+        except (BrokenPipeError, ConnectionResetError):
+            self.close_connection = True  # the client left before the reply; telemetry exporters do this at exit
         finally:
             self.db.close()
 
@@ -152,7 +155,7 @@ def otel_env(port, job):
             'OTEL_LOGS_EXPORT_INTERVAL': '2000', 'OTEL_RESOURCE_ATTRIBUTES': f'ai_usage.job={job}'}
 
 
-def worker(db_path, scan_interval, probe_interval, otel_port):
+def worker(db_path, scan_interval, probe_interval, otel_port, quota_interval=300):
     db = store.connect(db_path, init=False)
     while True:
         started = time.time()
@@ -167,6 +170,11 @@ def worker(db_path, scan_interval, probe_interval, otel_port):
                 probe.run(db, otel_env(otel_port, 'ai-usage-probe'))
             except Exception:
                 log.exception('probe failed')
+        if quota_interval and antigravity_quota.due(db, quota_interval):
+            try:
+                antigravity_quota.poll(db)
+            except Exception:
+                log.exception('Antigravity quota poll failed')
         time.sleep(max(5, scan_interval - (time.time() - started)))
 
 
@@ -177,6 +185,7 @@ def main():
     parser.add_argument('--otlp-port', type=int, default=4318)
     parser.add_argument('--scan-interval', type=int, default=60)
     parser.add_argument('--probe-interval', type=int, default=1200, help='seconds between Claude limit probes; 0 disables')
+    parser.add_argument('--quota-interval', type=int, default=300, help='seconds between Antigravity quota reads; 0 disables')
     parser.add_argument('--db', help='SQLite path (default ~/Library/Application Support/ai-usage/usage.sqlite)')
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
@@ -186,7 +195,7 @@ def main():
     collector = ThreadingHTTPServer(('127.0.0.1', args.otlp_port), Collector)
     dashboard = ThreadingHTTPServer((args.host, args.port), Dashboard)
     threading.Thread(target=collector.serve_forever, daemon=True, name='otlp').start()
-    threading.Thread(target=worker, args=(args.db, args.scan_interval, args.probe_interval, args.otlp_port),
+    threading.Thread(target=worker, args=(args.db, args.scan_interval, args.probe_interval, args.otlp_port, args.quota_interval),
                      daemon=True, name='worker').start()
     log.info('dashboard on %s:%s, OTLP on 127.0.0.1:%s', args.host, args.port, args.otlp_port)
     dashboard.serve_forever()

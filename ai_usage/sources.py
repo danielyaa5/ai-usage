@@ -358,7 +358,18 @@ def dedupe(db):
     db.commit()
 
 
+def reattribute(db):
+    """When jobs.json changes, read every log again so stored events pick up the new rules. Events whose
+    logs are gone keep their old attribution."""
+    mtime = os.path.getmtime(jobs.JOBS_PATH)
+    if get_kv(db, 'jobs_mtime') != mtime:
+        db.execute('DELETE FROM files')
+        db.commit()
+        set_kv(db, 'jobs_mtime', mtime)
+
+
 def scan_all(db):
+    reattribute(db)
     counts = {}
     for name, scanner in (('claude', scan_claude), ('codex', scan_codex), ('antigravity', scan_antigravity)):
         try:

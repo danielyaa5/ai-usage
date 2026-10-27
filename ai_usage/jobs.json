@@ -14,7 +14,10 @@
     {"regex": "^This is an automated (?:scheduled |daily )?run of (?:the )?(?P<name>[^.]+?)(?: \\(|\\.|$)", "job": "Scheduled: {name}"},
     {"startswith": "CRITICAL INSTRUCTION: Do NOT call any tools", "job": "ai-trader", "detail": "trade proposals and review"},
     {"startswith": "CRITICAL INSTRUCTION: Do NOT run any shell commands", "job": "ai-trader", "detail": "trade review"},
-    {"contains": "Search US sellers and stores for these watches", "job": "price-watch", "detail": "Claude research"}
+    {"contains": "Search US sellers and stores for these watches", "job": "price-watch", "detail": "Claude research"},
+    {"startswith": "Read these three image files in order:", "job": "Gate camera (shadow AI)", "detail": "gate open/closed check"},
+    {"contains": "Use only your built-in web search and web page reading tools", "job": "M2 server page (Reply Radar, Price Watch research)", "detail": "Reply Radar"},
+    {"contains": "Search the public web for recent conversations where a reply from me", "job": "M2 server page (Reply Radar, Price Watch research)", "detail": "Reply Radar"}
   ],
   "cwd_rules": [
     {"prefix": "~/Developer/ai-trader", "job": "ai-trader"},

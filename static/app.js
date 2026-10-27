@@ -108,21 +108,29 @@ function renderPlans(d) {
     const meta = PLANS[name];
     const plan = d.plans.find((p) => p.plan === name) || {};
     const limits = d.limits.filter((l) => l.vendor === meta.vendor);
-    let body = limits.map(meter).join('');
+    let body = '';
+    let group = null;
+    limits.forEach((l) => {
+      if (l.group && l.group !== group) body += `<div class="group">${esc(l.group)}</div>`;
+      group = l.group;
+      body += meter(l);
+    });
     if (meta.vendor === 'anthropic' && limits.length) {
       const extra = limits[0].extra || {};
       if (extra.overageStatus) body += `<div class="meter-sub"><span>Extra usage: ${extra.overageStatus === 'rejected' ? 'off' : esc(extra.overageStatus)}${extra.isUsingOverage ? ' (in use)' : ''}</span></div>`;
     }
     if (!limits.length) {
       body = meta.vendor === 'google'
-        ? '<p class="muted">Antigravity does not report its credit balance to local files, so only usage is shown.</p>'
+        ? '<p class="muted">No limit reading yet. Limits are read from the Antigravity app while it is open on this Mac.</p>'
         : '<p class="muted">No limit reading yet.</p>';
     }
     if (meta.vendor === 'anthropic' && d.status.probe_error) body += `<p class="status warning">${ICONS.warning} Probe: ${esc(d.status.probe_error)}</p>`;
+    if (meta.vendor === 'google' && d.status.antigravity_quota_error) body += `<p class="status warning">${ICONS.warning} ${esc(d.status.antigravity_quota_error)}</p>`;
+    const title = meta.vendor === 'google' && d.status.antigravity_tier ? `${d.status.antigravity_tier} (Antigravity)` : name;
     const value = plan.cost || 0;
     const compare = plan.prorated_usd ? ` vs <b>${usd(plan.prorated_usd)}</b> of plan price` : '';
     return `<article class="plan">
-      <div class="plan-head"><span class="swatch" style="background:var(${meta.color})"></span><strong>${esc(name)}</strong>
+      <div class="plan-head"><span class="swatch" style="background:var(${meta.color})"></span><strong>${esc(title)}</strong>
         <span class="price">${plan.monthly_usd ? '$' + plan.monthly_usd + '/mo' : 'price not set'}</span></div>
       ${body}
       <div class="plan-foot">

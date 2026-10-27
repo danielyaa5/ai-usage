@@ -4,10 +4,11 @@ import sqlite3
 import tempfile
 import time
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
-from ai_usage import jobs, pricing, probe, protowire, report, server, sources, store, telemetry
+from ai_usage import antigravity_quota, jobs, pricing, probe, protowire, report, server, sources, store, telemetry
 
 
 def varint(n):
@@ -218,6 +219,40 @@ class ProbeTest(Base):
         self.assertEqual(probe.record(self.db, info), 2)
         limits = {r['window']: r['used_pct'] for r in self.db.execute('SELECT * FROM limits')}
         self.assertEqual(limits, {'five_hour': 4.0, 'seven_day': 31.0})
+
+
+class AntigravityQuotaTest(Base):
+    SUMMARY = {'response': {'groups': [
+        {'displayName': 'Gemini Models', 'description': 'Models within this group: Gemini Flash, Gemini Pro', 'buckets': [
+            {'bucketId': 'gemini-weekly', 'window': 'weekly', 'remainingFraction': 0.6429652, 'resetTime': '2026-11-02T00:45:19Z'},
+            {'bucketId': 'gemini-5h', 'window': '5h', 'remainingFraction': 0.91326165, 'resetTime': '2026-10-27T15:33:31Z'}]},
+        {'displayName': 'Claude and GPT models', 'buckets': [
+            {'bucketId': '3p-5h', 'window': '5h', 'remainingFraction': 1, 'resetTime': '2026-10-27T16:27:41Z'}]}]}}
+
+    def test_finds_app_server_token_first(self):
+        ps = ('  9411 /Applications/Antigravity.app/Contents/Resources/bin/language_server --standalone --csrf_token abc-123 --app_data_dir antigravity\n'
+              '  9442 /Applications/Antigravity.app/Contents/Resources/bin/language_server\n'
+              '  7000 /Users/x/.gemini/antigravity-cli/bin/language_server --csrf_token=cli-9\n'
+              '  8000 /usr/bin/other_language_server --csrf_token nope\n')
+        self.assertEqual(antigravity_quota.servers(ps), [(9411, 'abc-123'), (7000, 'cli-9')])
+
+    def test_records_buckets_as_limits(self):
+        self.assertEqual(antigravity_quota.record(self.db, self.SUMMARY, 'Google AI Ultra'), 3)
+        limits = [l for l in report.limits(self.db) if l['vendor'] == 'google']
+        self.assertEqual([(l['group'], l['label'], l['used_pct']) for l in limits],
+                         [('Gemini Models', '5-hour', 8.7), ('Gemini Models', 'Weekly', 35.7),
+                          ('Claude and GPT models', '5-hour', 0.0)])
+        self.assertEqual(limits[0]['plan'], 'Google AI Ultra')
+        self.assertEqual(limits[0]['resets_at'], int(datetime(2026, 10, 27, 15, 33, 31, tzinfo=timezone.utc).timestamp()))
+
+
+class StoreTest(Base):
+    def test_repeat_refreshes_job_and_keeps_larger_counts(self):
+        base = dict(id='x', ts=1, source='antigravity_cli', vendor='google', plan='p', tool='t', model='m')
+        store.put_events(self.db, [dict(base, job='Antigravity CLI (other)', input=10, output=50, cost_usd=1.0)])
+        store.put_events(self.db, [dict(base, job='Gate camera (shadow AI)', input=10, output=20, cost_usd=0.5)])
+        row = self.events()[0]
+        self.assertEqual((row['job'], row['output'], row['cost_usd']), ('Gate camera (shadow AI)', 50, 1.0))
 
 
 class ReportAndServerTest(Base):
