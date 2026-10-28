@@ -121,6 +121,7 @@ def summary(db, range_name='7d', now=None):
     jobs_out.sort(key=lambda j: -j['cost'])
     rank = {e: i for i, e in enumerate(pricing.EFFORTS + ('unknown',))}
     models_out = sorted((dict(finish(v), model=m, plans=sorted(v['plans']), priced=pricing.price_for(m) is not None,
+                              price=pricing.price_for(m),
                               efforts=sorted(({'effort': e, **finish(s)} for e, s in v['efforts'].items()),
                                              key=lambda x: rank.get(x['effort'], 99)))
                          for m, v in by_model.items()), key=lambda m: -m['cost'])

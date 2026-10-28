@@ -305,6 +305,7 @@ class ReportAndServerTest(Base):
         self.assertEqual([(e['effort'], e['requests']) for e in data['efforts']], [('high', 1), ('unknown', 1)])
         opus = next(m for m in data['models'] if m['model'] == 'claude-opus-5-5')
         self.assertEqual([e['effort'] for e in opus['efforts']], ['high'])
+        self.assertEqual((opus['price']['input'], opus['price']['output']), (4.0, 20.0))
 
     def test_access_checks(self):
         self.assertTrue(server.client_allowed('192.168.1.20'))

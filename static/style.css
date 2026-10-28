@@ -209,3 +209,4 @@ tr.child .effort { margin-left: 0; }
 .mix-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 8px; font-size: 12px; color: var(--text-primary); }
 .mix-legend .effort { margin-left: 0; }
 tr.model-row td { font-weight: 500; }
+#models td.wrap { min-width: 0; }
