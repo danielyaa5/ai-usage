@@ -127,6 +127,15 @@ def summary(db, range_name='7d', now=None):
                                              key=lambda x: rank.get(x['effort'], 99)))
                          for m, v in by_model.items()), key=lambda m: -m['cost'])
     efforts_out = sorted(({'effort': e, **finish(s)} for e, s in by_effort.items()), key=lambda x: rank.get(x['effort'], 99))
+    # Quoted list prices for the models Daniel compares, with what each effort cost per request here.
+    used = {m['model']: m for m in models_out}
+    price_table = []
+    for name in pricing.table().get('featured', []):
+        efforts = {e['effort']: {'requests': e['requests'], 'per_request': round(e['cost'] / e['requests'], 4)}
+                   for e in (used.get(name) or {}).get('efforts', []) if e['requests']}
+        vendor = 'anthropic' if name.startswith('claude') else 'openai' if name.startswith('gpt') else 'google'
+        price_table.append(dict(model=name, vendor=vendor, price=pricing.price_for(name), efforts=efforts))
+
     # The daily chart shows the 7 costliest models by name and folds the rest into one series.
     top = [m['model'] for m in models_out[:7]]
     rest = [m['model'] for m in models_out[7:]]
@@ -162,7 +171,7 @@ def summary(db, range_name='7d', now=None):
 
     return dict(
         generated_at=int(now), host='my-mac', range=range_name, bucket=bucket_size,
-        buckets=keys, series=series_out, series_order=order, totals=finish(total), plans=plan_info, jobs=jobs_out, models=models_out, efforts=efforts_out,
+        buckets=keys, series=series_out, series_order=order, totals=finish(total), plans=plan_info, jobs=jobs_out, models=models_out, efforts=efforts_out, price_table=price_table,
         recent=recent, limits=limits(db), sources=sources,
         status=dict(last_scan=get_kv(db, 'last_scan'), scan_result=get_kv(db, 'scan_result'),
                     probe_last=get_kv(db, 'probe_last'), probe_error=get_kv(db, 'probe_error'),
@@ -171,4 +180,4 @@ def summary(db, range_name='7d', now=None):
                     antigravity_quota_last=get_kv(db, 'antigravity_quota_last'),
                     antigravity_quota_error=get_kv(db, 'antigravity_quota_error'),
                     codex_limits_error=get_kv(db, 'codex_limits_error')),
-        pricing=dict(checked=table.get('checked'), sources=table.get('sources')))
+        pricing=dict(checked=table.get('checked'), sources=table.get('sources'), urls=table.get('source_urls', {})))

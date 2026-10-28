@@ -309,6 +309,10 @@ class ReportAndServerTest(Base):
         self.assertEqual(set(data['series']), {'plan', 'model', 'effort'})
         self.assertEqual(data['series_order']['model'], ['gpt-6-astra', 'claude-opus-5-5'])
         self.assertEqual(sorted(data['series']['effort']), ['high', 'unknown'])
+        prices = {r['model']: r for r in data['price_table']}
+        self.assertEqual(list(prices), ['gpt-6.1-sol', 'gemini-3.8-flash', 'gemini-4-argon', 'claude-opus-5-5', 'gpt-6-astra'])
+        self.assertEqual(prices['claude-opus-5-5']['efforts'], {'high': {'requests': 1, 'per_request': 1.0}})
+        self.assertEqual((prices['gpt-6.1-sol']['price']['cache_read'], prices['gemini-4-argon']['vendor']), (0.1, 'google'))
 
     def test_access_checks(self):
         self.assertTrue(server.client_allowed('192.168.1.20'))

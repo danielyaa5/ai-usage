@@ -93,7 +93,7 @@ function render() {
   document.querySelectorAll('[data-group]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.group === state.group)));
   $('#chart-table-toggle').setAttribute('aria-pressed', String(state.showTable));
   $('#automated-only').checked = state.automatedOnly;
-  renderPlans(d); renderTiles(d); renderChart(d); renderJobs(d); renderModels(d); renderRecent(d); renderSources(d);
+  renderPlans(d); renderTiles(d); renderChart(d); renderJobs(d); renderModels(d); renderPrices(d); renderRecent(d); renderSources(d);
 }
 
 function meter(limit) {
@@ -340,9 +340,8 @@ function perRequest(x) {
 
 function priceLine(price) {
   if (!price) return '';
-  const p = (v) => '$' + (v >= 1 ? v.toFixed(2).replace(/\.00$/, '') : String(Number(v.toPrecision(2))));
-  const cached = price.cache_read != null ? ` · cached ${p(price.cache_read)}` : '';
-  return `<div class="detail">${p(price.input)} in · ${p(price.output)} out${cached} per 1M tokens</div>`;
+  const cached = price.cache_read != null ? ` · cached ${money(price.cache_read)}` : '';
+  return `<div class="detail">${money(price.input)} in · ${money(price.output)} out${cached} per 1M tokens</div>`;
 }
 
 function renderEffortMix(d) {
@@ -411,14 +410,50 @@ function renderModels(d) {
     <tbody>${rows || '<tr><td colspan="8" class="muted">No usage in this range</td></tr>'}</tbody></table>`;
 }
 
+const MODEL_NAMES = { 'gpt-6.1-sol': 'GPT-6.1 Sol', 'gpt-6-sol': 'GPT-6 Sol', 'gpt-6-astra': 'GPT-6 Astra', 'gpt-6-luna': 'GPT-6 Luna',
+  'gemini-3.8-flash': 'Gemini 3.8 Flash', 'gemini-4-argon': 'Gemini 4 Argon', 'claude-opus-5-5': 'Claude Opus 5.5',
+  'claude-fable-5-1': 'Claude Fable 5.1', 'claude-sonnet-5-5': 'Claude Sonnet 5.5', 'claude-haiku-5-5': 'Claude Haiku 5.5' };
+const COMPANIES = { anthropic: 'Anthropic', openai: 'OpenAI', google: 'Google' };
+
+function money(v) {
+  if (v == null) return '–';
+  if (v >= 1) return '$' + v.toFixed(2).replace(/\.00$/, '');
+  const short = String(Number(v.toPrecision(2)));
+  return '$' + ((short.split('.')[1] || '').length < 2 ? v.toFixed(2) : short);
+}
+
+function smallUsd(v) {
+  return v != null && v > 0 && v < 0.01 ? money(v) : usd(v);
+}
+
+function renderPrices(d) {
+  const efforts = ['low', 'medium', 'high', 'xhigh', 'max'];
+  const rows = d.price_table.map((r) => {
+    const p = r.price || {};
+    const effortCells = efforts.map((e) => {
+      const x = r.efforts[e];
+      return `<td class="num">${x ? `${smallUsd(x.per_request)}<div class="detail">${x.requests.toLocaleString()} req</div>` : '<span class="muted">–</span>'}</td>`;
+    }).join('');
+    return `<tr><td class="wrap sticky"><b>${esc(MODEL_NAMES[r.model] || r.model)}</b>${p.note ? `<div class="detail">${esc(p.note)}</div>` : ''}</td>
+      <td class="hide-sm">${esc(COMPANIES[r.vendor] || r.vendor)}</td>
+      <td class="num">${money(p.input)}</td><td class="num">${money(p.cache_read)}</td><td class="num"><b>${money(p.output)}</b></td>${effortCells}</tr>`;
+  }).join('');
+  const links = Object.entries(d.pricing.urls || {}).map(([v, u]) => `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(COMPANIES[v] || v)}</a>`).join(' · ');
+  $('#prices').innerHTML = `<table class="prices"><thead>
+      <tr><th rowspan="2" class="sticky">Model</th><th rowspan="2" class="hide-sm">Company</th><th colspan="3" class="group-h">Quoted price per 1M tokens</th><th colspan="5" class="group-h">Your average per request, by effort</th></tr>
+      <tr><th class="num">Input</th><th class="num">Cached</th><th class="num">Output</th>${efforts.map((e) => `<th class="num">${effortTag(e)}</th>`).join('')}</tr>
+    </thead><tbody>${rows}</tbody></table>
+    <p class="note">Prices checked ${esc(d.pricing.checked)} on the official pages: ${links}.</p>`;
+}
+
 function renderRecent(d) {
   const rows = d.recent.slice(0, 25).map((r) => `<tr>
     <td>${esc(clock(r.ts))}</td>
     <td class="wrap">${esc(r.job)}${r.detail ? `<div class="detail">${esc(r.detail)}</div>` : ''}</td>
     <td class="hide-sm">${esc(r.model)}</td>
-    <td class="num">${tokens(r.tokens)}</td>
+    <td class="num hide-sm">${tokens(r.tokens)}</td>
     <td class="num">${usd(r.cost)}</td></tr>`).join('');
-  $('#recent').innerHTML = `<table><thead><tr><th>When</th><th>Job or app</th><th class="hide-sm">Model</th><th class="num">Tokens</th><th class="num">API value</th></tr></thead><tbody>${rows}</tbody></table>`;
+  $('#recent').innerHTML = `<table><thead><tr><th>When</th><th>Job or app</th><th class="hide-sm">Model</th><th class="num hide-sm">Tokens</th><th class="num">API value</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 function renderSources(d) {
