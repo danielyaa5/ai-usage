@@ -60,9 +60,9 @@ function clock(ts) {
   const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   return d.toDateString() === today.toDateString() ? time : d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + time;
 }
-function level(pct) {
-  if (pct >= 90) return ['critical', 'Near limit'];
-  if (pct >= 70) return ['warning', 'Getting high'];
+function level(left) {
+  if (left <= 10) return ['critical', 'Almost out'];
+  if (left <= 30) return ['warning', 'Running low'];
   return ['good', 'OK'];
 }
 
@@ -96,14 +96,14 @@ function render() {
 }
 
 function meter(limit) {
-  const pct = Math.max(0, Math.min(100, limit.used_pct || 0));
-  const [lvl, word] = level(pct);
+  const left = Math.max(0, Math.min(100, 100 - (limit.used_pct || 0)));
+  const [lvl, word] = level(left);
   const stale = Date.now() / 1000 - limit.observed_at > 6 * 3600;
   return `<div class="meter">
     <div class="meter-top"><span>${esc(limit.label)}</span>
-      <span><span class="status ${lvl}">${ICONS[lvl]}${word}</span> <span class="pct">${Math.round(pct)}%</span></span></div>
-    <div class="meter-track" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(pct)}" aria-label="${esc(limit.label)} used">
-      <div class="meter-fill" style="width:${pct}%;background:var(--${lvl})"></div></div>
+      <span><span class="status ${lvl}">${ICONS[lvl]}${word}</span> <span class="pct">${Math.round(left)}% left</span></span></div>
+    <div class="meter-track" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(left)}" aria-label="${esc(limit.label)} remaining">
+      <div class="meter-fill" style="width:${left}%;background:var(--${lvl})"></div></div>
     <div class="meter-sub"><span>${esc(until(limit.resets_at))}</span><span${stale ? ' class="status warning"' : ''}>as of ${esc(ago(limit.observed_at))}</span></div>
   </div>`;
 }
