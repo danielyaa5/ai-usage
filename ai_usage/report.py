@@ -85,7 +85,7 @@ def summary(db, range_name='7d', now=None):
     keys = [b.strftime('%Y-%m-%d %H' if bucket_size == 'hour' else '%Y-%m-%d') for b in buckets]
     index = {k: i for i, k in enumerate(keys)}
 
-    total, plans, by_job, by_model = empty(), {}, {}, {}
+    total, plans, by_job, by_model, by_effort = empty(), {}, {}, {}, {}
     series = {}
     for row in rows:
         add(total, row)
@@ -93,11 +93,14 @@ def summary(db, range_name='7d', now=None):
         job = by_job.setdefault(row['job'], dict(empty(), tools=set(), models={}, details={}, last=0))
         add(job, row)
         job['tools'].add(row['tool'])
-        add(job['models'].setdefault(row['model'], empty()), row)
+        effort = row['effort'] or 'unknown'
+        add(job['models'].setdefault((row['model'], effort), empty()), row)
+        add(by_effort.setdefault(effort, empty()), row)
         if row['detail']:
             job['details'][row['detail']] = job['details'].get(row['detail'], 0) + (row['cost_usd'] or 0)
         job['last'] = max(job['last'], row['ts'])
-        model = by_model.setdefault(row['model'], dict(empty(), vendor=row['vendor'], plans=set()))
+        model = by_model.setdefault(row['model'], dict(empty(), vendor=row['vendor'], plans=set(), efforts={}))
+        add(model['efforts'].setdefault(effort, empty()), row)
         model['plans'].add(row['plan'])
         add(model, row)
         key = datetime.fromtimestamp(row['ts']).strftime('%Y-%m-%d %H' if bucket_size == 'hour' else '%Y-%m-%d')
@@ -111,13 +114,17 @@ def summary(db, range_name='7d', now=None):
     for name, job in by_job.items():
         details = sorted(job.pop('details').items(), key=lambda kv: -kv[1])[:5]
         jobs_out.append(dict(finish(job), job=name, tools=sorted(job['tools']),
-                             models=sorted(({'model': m, **finish(v)} for m, v in job['models'].items()),
+                             models=sorted(({'model': m, 'effort': e, **finish(v)} for (m, e), v in job['models'].items()),
                                            key=lambda m: -m['cost']),
                              details=[d for d, _ in details],
                              automated=not name.endswith('(interactive)')))
     jobs_out.sort(key=lambda j: -j['cost'])
-    models_out = sorted((dict(finish(v), model=m, plans=sorted(v['plans']), priced=pricing.price_for(m) is not None)
+    rank = {e: i for i, e in enumerate(pricing.EFFORTS + ('unknown',))}
+    models_out = sorted((dict(finish(v), model=m, plans=sorted(v['plans']), priced=pricing.price_for(m) is not None,
+                              efforts=sorted(({'effort': e, **finish(s)} for e, s in v['efforts'].items()),
+                                             key=lambda x: rank.get(x['effort'], 99)))
                          for m, v in by_model.items()), key=lambda m: -m['cost'])
+    efforts_out = sorted(({'effort': e, **finish(s)} for e, s in by_effort.items()), key=lambda x: rank.get(x['effort'], 99))
     series_out = {plan: [finish(p) if p else None for p in points] for plan, points in series.items()}
 
     recent = [dict(ts=r['ts'], job=r['job'], detail=r['detail'], tool=r['tool'], model=r['model'], plan=r['plan'],
@@ -138,7 +145,7 @@ def summary(db, range_name='7d', now=None):
 
     return dict(
         generated_at=int(now), host='my-mac', range=range_name, bucket=bucket_size,
-        buckets=keys, series=series_out, totals=finish(total), plans=plan_info, jobs=jobs_out, models=models_out,
+        buckets=keys, series=series_out, totals=finish(total), plans=plan_info, jobs=jobs_out, models=models_out, efforts=efforts_out,
         recent=recent, limits=limits(db), sources=sources,
         status=dict(last_scan=get_kv(db, 'last_scan'), scan_result=get_kv(db, 'scan_result'),
                     probe_last=get_kv(db, 'probe_last'), probe_error=get_kv(db, 'probe_error'),

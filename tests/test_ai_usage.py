@@ -88,7 +88,7 @@ class ClaudeTranscriptTest(Base):
         usage = {'input_tokens': 2, 'cache_read_input_tokens': 1000, 'cache_creation_input_tokens': 500,
                  'cache_creation': {'ephemeral_1h_input_tokens': 500}, 'output_tokens': 10}
         line = {'type': 'assistant', 'sessionId': 's1', 'requestId': 'req_1', 'timestamp': '2026-10-26T15:00:00Z',
-                'cwd': '/Users/x', 'entrypoint': 'claude-desktop',
+                'cwd': '/Users/x', 'entrypoint': 'claude-desktop', 'effort': 'xhigh',
                 'message': {'id': 'msg_1', 'model': 'claude-opus-5-5', 'usage': usage}}
         final = json.loads(json.dumps(line))
         final['message']['usage']['output_tokens'] = 250
@@ -101,6 +101,7 @@ class ClaudeTranscriptTest(Base):
         self.assertEqual(rows[0]['output'], 250)
         self.assertEqual(rows[0]['job'], 'Scheduled: Morning Brief')
         self.assertEqual(rows[0]['id'], 'anthropic:req_1')
+        self.assertEqual(rows[0]['effort'], 'xhigh')
         self.assertAlmostEqual(rows[0]['cost_usd'], pricing.cost('claude-opus-5-5', 2, 1000, 500, 250, 500))
 
     def test_incremental_append_and_partial_line(self):
@@ -128,7 +129,7 @@ class CodexRolloutTest(Base):
         lines = [
             {'type': 'session_meta', 'timestamp': '2026-10-26T10:00:00Z',
              'payload': {'id': 'c1', 'cwd': '/tmp/x', 'originator': 'Codex Desktop', 'source': 'vscode'}},
-            {'type': 'turn_context', 'payload': {'turn_id': 't1', 'model': 'gpt-6-astra'}},
+            {'type': 'turn_context', 'payload': {'turn_id': 't1', 'model': 'gpt-6-astra', 'effort': 'high'}},
             {'type': 'event_msg', 'payload': {'type': 'user_message', 'message': 'hello'}},
             {'type': 'token_usage_record', 'timestamp': '2026-10-26T10:00:05Z',
              'payload': {'turn_id': 't1', 'response_id': 'resp_1', 'usage': {
@@ -146,6 +147,7 @@ class CodexRolloutTest(Base):
         row = rows[0]
         self.assertEqual((row['model'], row['input'], row['cache_read'], row['output']), ('gpt-6-astra', 200, 800, 50))
         self.assertEqual(row['job'], 'Codex (interactive)')
+        self.assertEqual(row['effort'], 'high')
         limit = self.db.execute('SELECT * FROM limits').fetchone()
         self.assertEqual((limit['window'], limit['used_pct'], limit['plan']), ('codex_primary', 64.0, 'pro'))
 
@@ -155,7 +157,7 @@ class AntigravityTest(Base):
         con = sqlite3.connect(path)
         con.executescript('CREATE TABLE steps (idx integer, step_type integer, status integer, metadata blob, step_payload blob);'
                           'CREATE TABLE gen_metadata (idx integer, data blob, size integer);')
-        gen = field(1, field(4, usage_msg(1318, 16947, 931, 840)) + field(19, 'gemini-3.8-flash'))
+        gen = field(1, field(4, usage_msg(1318, 16947, 931, 840)) + field(19, 'gemini-3.8-flash') + field(21, 'Gemini 3.8 Flash (High)'))
         con.execute('INSERT INTO gen_metadata VALUES (0, ?, 0)', (gen,))
         con.execute('INSERT INTO steps VALUES (0, 14, 3, ?, ?)', (field(1, field(1, 1793072723)), field(19, field(2, prompt))))
         meta = field(1, field(1, 1793072723)) + field(8, field(1, 1793072728)) + field(9, usage_msg(1318, 16947, 931, 840)) + field(11, 1318)
@@ -175,6 +177,14 @@ class AntigravityTest(Base):
         self.assertEqual((row['model'], row['input'], row['output'], row['reasoning'], row['ts']),
                          ('gemini-3.8-flash', 16947, 931, 840, 1793072728))
         self.assertEqual((row['job'], row['detail'], row['plan']), ('ai-trader', 'health monitor', 'Google (Antigravity)'))
+        self.assertEqual(row['effort'], 'high')
+
+    def test_effort_from_model_suffix_and_app_labels(self):
+        self.assertEqual(pricing.split_effort('gemini-3.8-flash-tiered'), ('gemini-3.8-flash', 'auto'))
+        self.assertEqual(pricing.split_effort('claude-opus-5-5-high'), ('claude-opus-5-5', 'high'))
+        self.assertEqual(pricing.split_effort('gpt-6-astra'), ('gpt-6-astra', None))
+        self.assertEqual(sources.antigravity_effort(1419, {}, {'MODEL_PLACEHOLDER_M419': 'Gemini 4 Argon (Low)'}), 'low')
+        self.assertIsNone(sources.antigravity_effort(1999, {}, {}))
 
 
 class TelemetryTest(Base):
@@ -187,11 +197,12 @@ class TelemetryTest(Base):
         claude = self.otlp({'service.name': 'claude-code', 'ai_usage.job': 'price-watch'},
                            {'event.name': 'api_request', 'event.timestamp': '2026-10-27T04:10:47.863Z',
                             'request_id': 'req_9', 'model': 'claude-opus-5-5', 'input_tokens': 2, 'output_tokens': 4,
-                            'cache_read_tokens': 10, 'cache_creation_tokens': 0, 'cost_usd': 0.5, 'session.id': 'x'})
+                            'cache_read_tokens': 10, 'cache_creation_tokens': 0, 'cost_usd': 0.5, 'session.id': 'x', 'effort': 'max'})
         codex = self.otlp({'service.name': 'codex_exec', 'ai_usage.job': 'ai-trader'},
                           {'event.name': 'codex.sse_event', 'event.kind': 'response.completed', 'model': 'gpt-6-astra',
                            'input_token_count': '21146', 'cached_token_count': '10112', 'output_token_count': '5',
-                           'reasoning_token_count': '0', 'conversation.id': 'conv', 'event.timestamp': '2026-10-27T04:11:22Z'})
+                           'reasoning_token_count': '0', 'conversation.id': 'conv', 'event.timestamp': '2026-10-27T04:11:22Z',
+                           'model_reasoning_effort': 'xhigh'})
         self.assertEqual(telemetry.ingest_logs(self.db, claude), 1)
         self.assertEqual(telemetry.ingest_logs(self.db, codex), 1)
         rows = {r['source']: r for r in self.events()}
@@ -199,6 +210,7 @@ class TelemetryTest(Base):
                          ('price-watch', 0.5, 'reported'))
         self.assertEqual((rows['otel_codex']['job'], rows['otel_codex']['input'], rows['otel_codex']['cache_read']),
                          ('ai-trader', 11034, 10112))
+        self.assertEqual((rows['otel_claude']['effort'], rows['otel_codex']['effort']), ('max', 'xhigh'))
 
     def test_codex_telemetry_yields_to_session_log(self):
         store.put_events(self.db, [dict(id='openai:resp', ts=1, source='codex_rollout', vendor='openai', plan='p', tool='Codex',
@@ -265,12 +277,22 @@ class StoreTest(Base):
         self.assertEqual((row['job'], row['output'], row['cost_usd']), ('Gate camera (shadow AI)', 50, 1.0))
 
 
+class MigrationTest(Base):
+    def test_effort_suffix_moves_out_of_stored_model_names(self):
+        store.put_events(self.db, [dict(id='g', ts=1, source='antigravity_cli', vendor='anthropic', plan='p', tool='t',
+                                        model='claude-opus-5-5-high', job='j', output=1)])
+        sources.split_stored_models(self.db)
+        row = self.events()[0]
+        self.assertEqual((row['model'], row['effort']), ('claude-opus-5-5', 'high'))
+
+
 class ReportAndServerTest(Base):
     def test_summary_buckets_and_jobs(self):
         now = time.time()
         store.put_events(self.db, [
             dict(id='a', ts=int(now) - 60, source='claude_transcript', vendor='anthropic', plan='Claude Max 20x',
-                 tool='Claude Code', model='claude-opus-5-5', job='Scheduled: Morning Brief', input=10, output=5, cost_usd=1.0),
+                 tool='Claude Code', model='claude-opus-5-5', job='Scheduled: Morning Brief', input=10, output=5, cost_usd=1.0,
+                 effort='high'),
             dict(id='b', ts=int(now) - 120, source='codex_rollout', vendor='openai', plan='ChatGPT Pro', tool='Codex',
                  model='gpt-6-astra', job='Codex (interactive)', input=10, output=5, cost_usd=2.0),
         ])
@@ -280,6 +302,9 @@ class ReportAndServerTest(Base):
         self.assertEqual(data['jobs'][0]['job'], 'Codex (interactive)')
         self.assertFalse(data['jobs'][0]['automated'])
         self.assertTrue(data['jobs'][1]['automated'])
+        self.assertEqual([(e['effort'], e['requests']) for e in data['efforts']], [('high', 1), ('unknown', 1)])
+        opus = next(m for m in data['models'] if m['model'] == 'claude-opus-5-5')
+        self.assertEqual([e['effort'] for e in opus['efforts']], ['high'])
 
     def test_access_checks(self):
         self.assertTrue(server.client_allowed('192.168.1.20'))

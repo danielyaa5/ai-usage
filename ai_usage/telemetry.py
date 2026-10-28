@@ -63,7 +63,7 @@ def claude_event(resource, attrs):
                 vendor='anthropic', plan=CLAUDE_PLAN, tool='Claude Code', model=pricing.normalize_model(model),
                 job=job, detail=resource.get('ai_usage.detail'), session=attrs.get('session.id'), cwd=None,
                 cost_usd=cost, cost_basis='reported' if reported not in (None, '') else 'priced',
-                speed=attrs.get('speed'), **tokens)
+                speed=attrs.get('speed'), effort=pricing.effort_name(attrs.get('effort')), **tokens)
 
 
 def codex_event(resource, attrs):
@@ -82,7 +82,8 @@ def codex_event(resource, attrs):
     return dict(id=f'openai:otel:{session}:{stamp}:{total_input}', ts=iso_ts(stamp) or 0, source='otel_codex',
                 vendor='openai', plan=OPENAI_PLAN, tool='Codex', model=pricing.normalize_model(model), job=job,
                 detail=resource.get('ai_usage.detail'), session=session, cwd=None, cost_usd=cost,
-                cost_basis='priced' if cost is not None else 'unpriced', speed=None, **tokens)
+                cost_basis='priced' if cost is not None else 'unpriced', speed=None,
+                effort=pricing.effort_name(attrs.get('model_reasoning_effort')), **tokens)
 
 
 def ingest_logs(db, body):

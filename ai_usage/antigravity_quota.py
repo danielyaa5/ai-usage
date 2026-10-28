@@ -119,9 +119,15 @@ def poll(db):
                 continue
             try:
                 status = call(port, token, 'GetUserStatus', {'metadata': {'ideName': 'antigravity', 'locale': 'en'}})
-                tier = ((status.get('userStatus') or {}).get('userTier') or {}).get('description')
+                user = status.get('userStatus') or {}
+                tier = (user.get('userTier') or {}).get('description')
                 if tier:
                     set_kv(db, 'antigravity_tier', tier)
+                configs = (user.get('cascadeModelConfigData') or {}).get('clientModelConfigs') or []
+                model_labels = {c['modelOrAlias']['model']: c['label'] for c in configs
+                                if c.get('label') and (c.get('modelOrAlias') or {}).get('model')}
+                if model_labels:
+                    set_kv(db, 'antigravity_model_labels', {**(get_kv(db, 'antigravity_model_labels', {}) or {}), **model_labels})
             except ConnectionError:
                 tier = get_kv(db, 'antigravity_tier')
             count = record(db, summary, tier or get_kv(db, 'antigravity_tier'))

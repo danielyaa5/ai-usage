@@ -185,3 +185,27 @@ tr[aria-expanded="true"] .chev { transform: rotate(90deg); }
 @media (forced-colors: active) {
   .meter-fill, .swatch, .dot { forced-color-adjust: none; }
 }
+
+/* Effort is ordinal: one blue ramp, more effort is darker (light mode) or brighter (dark mode). */
+:root { --e-low: #86b6ef; --e-medium: #5598e7; --e-high: #2a78d6; --e-xhigh: #1c5cab; --e-max: #104281; --e-auto: #9a998f; --e-unknown: #d4d3cd; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --e-low: #184f95; --e-medium: #256abf; --e-high: #3987e5; --e-xhigh: #6da7ec; --e-max: #9ec5f4; --e-auto: #7a7974; --e-unknown: #3a3a37; }
+}
+:root[data-theme="dark"] { --e-low: #184f95; --e-medium: #256abf; --e-high: #3987e5; --e-xhigh: #6da7ec; --e-max: #9ec5f4; --e-auto: #7a7974; --e-unknown: #3a3a37; }
+.effort { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600; color: var(--text-secondary); border: 1px solid var(--border); border-radius: 999px; padding: 0 8px 0 6px; margin-left: 4px; vertical-align: 1px; white-space: nowrap; }
+.effort::before { content: ""; width: 8px; height: 8px; border-radius: 2px; background: var(--e-unknown); }
+.e-low::before, .seg.e-low { background: var(--e-low); }
+.e-medium::before, .seg.e-medium { background: var(--e-medium); }
+.e-high::before, .seg.e-high { background: var(--e-high); }
+.e-xhigh::before, .seg.e-xhigh { background: var(--e-xhigh); }
+.e-max::before, .seg.e-max { background: var(--e-max); }
+.e-auto::before, .seg.e-auto { background: var(--e-auto); }
+.e-unknown::before, .seg.e-unknown { background: var(--e-unknown); }
+tr.child .effort { margin-left: 0; }
+.effort-mix { margin: 4px 0 14px; }
+.mix-label { font-size: 12px; color: var(--text-muted); margin-bottom: 6px; }
+.mix-bar { display: flex; gap: 2px; height: 12px; border-radius: 4px; overflow: hidden; background: var(--meter-track); }
+.mix-bar .seg { display: block; height: 100%; min-width: 2px; }
+.mix-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 8px; font-size: 12px; color: var(--text-primary); }
+.mix-legend .effort { margin-left: 0; }
+tr.model-row td { font-weight: 500; }

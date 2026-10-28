@@ -294,7 +294,7 @@ function renderJobs(d) {
       <td class="num"><b>${usd(j.cost)}</b></td>
       <td class="hide-sm">${esc(ago(j.last))}</td></tr>`;
     if (open) {
-      html += j.models.map((mo) => `<tr class="child"><td>${esc(mo.model)}</td><td class="hide-sm"></td><td class="num">${mo.requests.toLocaleString()}</td><td class="num">${tokens(mo.tokens)}</td><td class="num hide-sm">${tokens(mo.output)}</td><td class="num">${usd(mo.cost)}</td><td class="hide-sm"></td></tr>`).join('');
+      html += j.models.map((mo) => `<tr class="child"><td>${esc(mo.model)}${mo.effort !== 'unknown' ? ` · ${esc(EFFORT_LABELS[mo.effort] || mo.effort)}` : ''}</td><td class="hide-sm"></td><td class="num">${mo.requests.toLocaleString()}</td><td class="num">${tokens(mo.tokens)}</td><td class="num hide-sm">${tokens(mo.output)}</td><td class="num">${usd(mo.cost)}</td><td class="hide-sm"></td></tr>`).join('');
     }
     return html;
   }).join('');
@@ -311,16 +311,40 @@ function renderJobs(d) {
   });
 }
 
+const EFFORT_LABELS = { low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max', auto: 'Auto', unknown: 'Not recorded' };
+
+function effortTag(effort) {
+  return `<span class="effort e-${esc(effort)}">${esc(EFFORT_LABELS[effort] || effort)}</span>`;
+}
+
+function renderEffortMix(d) {
+  const total = d.efforts.reduce((a, e) => a + e.cost, 0);
+  if (!total) { $('#effort-mix').innerHTML = ''; return; }
+  const bar = d.efforts.filter((e) => e.cost > 0).map((e) =>
+    `<span class="seg e-${esc(e.effort)}" style="width:${(e.cost / total) * 100}%" title="${esc(EFFORT_LABELS[e.effort] || e.effort)}: ${usd(e.cost)}"></span>`).join('');
+  const legend = d.efforts.map((e) =>
+    `<span>${effortTag(e.effort)} ${usd(e.cost)} <span class="muted">· ${Math.round((e.cost / total) * 100)}% · ${e.requests.toLocaleString()} req</span></span>`).join('');
+  $('#effort-mix').innerHTML = `<div class="mix-label">Share of API value by effort</div><div class="mix-bar" role="img" aria-label="Share of API value by effort">${bar}</div><div class="mix-legend">${legend}</div>`;
+}
+
 function renderModels(d) {
-  const rows = d.models.map((mo) => `<tr>
-    <td>${esc(mo.model)}${mo.priced ? '' : '<span class="tag">no price</span>'}</td>
-    <td class="hide-sm">${mo.plans.map((p) => `<span class="dot" style="background:var(${(PLANS[p] || PLANS['Claude Max 20x']).color})"></span>${esc(PLANS[p] ? PLANS[p].short : p)}`).join(' ')}</td>
-    <td class="num">${mo.requests.toLocaleString()}</td>
-    <td class="num">${tokens(mo.input + mo.cache_write)}</td>
-    <td class="num hide-sm">${tokens(mo.cache_read)}</td>
-    <td class="num">${tokens(mo.output)}</td>
-    <td class="num"><b>${usd(mo.cost)}</b></td></tr>`).join('');
-  $('#models').innerHTML = `<table><thead><tr><th>Model</th><th class="hide-sm">Paid by</th><th class="num">Requests</th><th class="num">Input</th><th class="num hide-sm">Cached input</th><th class="num">Output</th><th class="num">API value</th></tr></thead>
+  renderEffortMix(d);
+  const plansCell = (mo) => mo.plans.map((p) => `<span class="dot" style="background:var(${(PLANS[p] || PLANS['Claude Max 20x']).color})"></span>${esc(PLANS[p] ? PLANS[p].short : p)}`).join(' ');
+  const cells = (x) => `<td class="num">${x.requests.toLocaleString()}</td>
+    <td class="num hide-sm">${tokens(x.input + x.cache_write)}</td>
+    <td class="num hide-sm">${tokens(x.cache_read)}</td>
+    <td class="num hide-sm">${tokens(x.output)}</td>`;
+  const rows = d.models.map((mo) => {
+    const single = mo.efforts.length === 1;
+    let html = `<tr class="model-row">
+      <td>${esc(mo.model)}${single ? ' ' + effortTag(mo.efforts[0].effort) : ''}${mo.priced ? '' : '<span class="tag">no price</span>'}</td>
+      <td class="hide-sm">${plansCell(mo)}</td>${cells(mo)}<td class="num"><b>${usd(mo.cost)}</b></td></tr>`;
+    if (!single) {
+      html += mo.efforts.map((e) => `<tr class="child"><td>${effortTag(e.effort)}</td><td class="hide-sm"></td>${cells(e)}<td class="num">${usd(e.cost)}</td></tr>`).join('');
+    }
+    return html;
+  }).join('');
+  $('#models').innerHTML = `<table><thead><tr><th>Model and effort</th><th class="hide-sm">Paid by</th><th class="num">Requests</th><th class="num hide-sm">Input</th><th class="num hide-sm">Cached input</th><th class="num hide-sm">Output</th><th class="num">API value</th></tr></thead>
     <tbody>${rows || '<tr><td colspan="7" class="muted">No usage in this range</td></tr>'}</tbody></table>`;
 }
 

@@ -7,6 +7,7 @@ Nothing here writes to the tools' own files.
 import glob
 import json
 import os
+import re
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -125,7 +126,8 @@ def claude_event(line, desktop, state):
         id='anthropic:' + (line.get('requestId') or message.get('id') or line.get('uuid')),
         ts=iso_ts(line.get('timestamp')) or 0, source='claude_transcript', vendor='anthropic', plan=CLAUDE_PLAN,
         tool='Claude Code', model=pricing.normalize_model(model), job=job, detail=detail, session=session, cwd=cwd,
-        cost_usd=cost, cost_basis='priced' if cost is not None else 'unpriced', speed=speed, **tokens)
+        cost_usd=cost, cost_basis='priced' if cost is not None else 'unpriced', speed=speed,
+        effort=pricing.effort_name(line.get('effort')), **tokens)
 
 
 def scan_claude(db, root=CLAUDE_PROJECTS):
@@ -226,9 +228,9 @@ def scan_codex(db, home=CODEX_HOME):
                              originator=payload.get('originator'), source=payload.get('source'))
             elif kind == 'turn_context':
                 if payload.get('model'):
-                    state['model'] = payload['model']
+                    state['model'], state['effort'] = payload['model'], payload.get('effort')
                     if payload.get('turn_id'):
-                        turns[payload['turn_id']] = payload['model']
+                        turns[payload['turn_id']] = [payload['model'], payload.get('effort')]
                         if len(turns) > 200:
                             turns.pop(next(iter(turns)))
                 state['cwd'] = state.get('cwd') or payload.get('cwd')
@@ -236,25 +238,26 @@ def scan_codex(db, home=CODEX_HOME):
                 state['prompt'] = str(payload.get('message') or '')[:400]
             elif kind == 'token_usage_record' and isinstance(payload.get('usage'), dict):
                 state['records'] = True
-                model = turns.get(payload.get('turn_id')) or state.get('model') or 'unknown'
+                model, effort = turns.get(payload.get('turn_id')) or [state.get('model') or 'unknown', state.get('effort')]
                 pending.append((ts, 'openai:' + (payload.get('response_id') or f"{state.get('session')}:{ts}"),
-                                model, codex_tokens(payload['usage'])))
+                                model, effort, codex_tokens(payload['usage'])))
             elif kind == 'event_msg' and payload.get('type') == 'token_count':
                 codex_limits(db, payload.get('rate_limits'), ts)
                 info = payload.get('info') or {}
                 if not state.get('records') and isinstance(info.get('last_token_usage'), dict):
                     total = (info.get('total_token_usage') or {}).get('total_tokens')
                     pending.append((ts, f"openai:{state.get('session')}:total:{total}", state.get('model') or 'unknown',
-                                    codex_tokens(info['last_token_usage'])))
+                                    state.get('effort'), codex_tokens(info['last_token_usage'])))
         job, detail = codex_job(state, titles)
-        for ts, event_id, model, tokens in pending:
+        for ts, event_id, model, effort, tokens in pending:
             if not any(tokens.values()):
                 continue
             cost = pricing.cost(model, tokens['input'], tokens['cache_read'], tokens['cache_write'], tokens['output'])
             events.append(dict(id=event_id, ts=ts, source='codex_rollout', vendor='openai', plan=OPENAI_PLAN,
                                tool='Codex', model=pricing.normalize_model(model), job=job, detail=detail,
                                session=state.get('session'), cwd=state.get('cwd'), cost_usd=cost,
-                               cost_basis='priced' if cost is not None else 'unpriced', speed=None, **tokens))
+                               cost_basis='priced' if cost is not None else 'unpriced', speed=None,
+                               effort=pricing.effort_name(effort), **tokens))
         added += put_events(db, events)
         commit_file(db, path, state)
     return added
@@ -284,15 +287,20 @@ def antigravity_summaries(base):
     return found
 
 
-def read_antigravity_db(path, model_names):
-    """Return (first prompt, [usage dicts with ts]) for one conversation database."""
+def read_antigravity_db(path, model_names, labels=None):
+    """Return (first prompt, [usage dicts with ts]) for one conversation database. Fills model_names and
+    labels (model enum -> model id, and -> display name such as 'Gemini 3.8 Flash (High)')."""
+    labels = {} if labels is None else labels
     con = sqlite3.connect(f'file:{path}?mode=ro', uri=True, timeout=5)
     try:
         for (data,) in con.execute('SELECT data FROM gen_metadata'):
             usage = pw.usage(pw.first(data, 1, 4) or b'')
             name = pw.text(pw.first(data, 1, 19))
+            label = pw.text(pw.first(data, 1, 21))
             if usage and name and usage['model_enum'] is not None:
                 model_names[str(usage['model_enum'])] = name
+            if usage and label and usage['model_enum'] is not None:
+                labels[str(usage['model_enum'])] = label
         prompt, rows = None, []
         for idx, step_type, meta, payload in con.execute(
                 'SELECT idx, step_type, metadata, step_payload FROM steps ORDER BY idx'):
@@ -309,9 +317,21 @@ def read_antigravity_db(path, model_names):
         con.close()
 
 
+def antigravity_effort(enum, labels, app_labels):
+    """Effort for a model enum from its display name, e.g. 'Gemini 4 Argon (Low)' -> 'low'. The app's own
+    model list (saved by the quota reader) names models as MODEL_PLACEHOLDER_M<enum - 1000>."""
+    label = labels.get(str(enum))
+    if not label and isinstance(enum, int):
+        label = app_labels.get(f'MODEL_PLACEHOLDER_M{enum - 1000}')
+    match = re.search(r'\(([^)]+)\)\s*$', label or '')
+    return pricing.effort_name(match.group(1)) if match else None
+
+
 def scan_antigravity(db, sources=None):
     sources = sources or ANTIGRAVITY
     model_names = get_kv(db, 'antigravity_models', {})
+    labels = get_kv(db, 'antigravity_labels', {})
+    app_labels = get_kv(db, 'antigravity_model_labels', {})
     added = 0
     for source, (base, tool) in sources.items():
         summaries = antigravity_summaries(base)
@@ -325,7 +345,7 @@ def scan_antigravity(db, sources=None):
                 continue
             cid = Path(path).stem
             try:
-                prompt, rows = read_antigravity_db(path, model_names)
+                prompt, rows = read_antigravity_db(path, model_names, labels)
             except sqlite3.Error:
                 continue  # busy or mid-write; retried on the next scan
             title, workspace = summaries.get(cid, (None, None))
@@ -337,6 +357,8 @@ def scan_antigravity(db, sources=None):
             events = []
             for row in rows:
                 model = model_names.get(str(row['model_enum']), f"antigravity-model-{row['model_enum']}")
+                model, effort = pricing.split_effort(model)
+                effort = antigravity_effort(row['model_enum'], labels, app_labels) or effort
                 cost = pricing.cost(model, row['input'], row['cache_read'], row['cache_write'], row['output'])
                 events.append(dict(
                     id='google:' + (row['response_id'] or f'{cid}:{row["idx"]}'), ts=row['ts'] or int(stat.st_mtime),
@@ -344,10 +366,11 @@ def scan_antigravity(db, sources=None):
                     tool=tool, model=pricing.normalize_model(model), job=job, detail=detail, session=cid,
                     cwd=workspace, input=row['input'], cache_read=row['cache_read'], cache_write=row['cache_write'],
                     output=row['output'], reasoning=row['reasoning'], cost_usd=cost,
-                    cost_basis='priced' if cost is not None else 'unpriced', speed=None))
+                    cost_basis='priced' if cost is not None else 'unpriced', speed=None, effort=effort))
             added += put_events(db, events)
             save_file_state(db, path, stat.st_size, stat.st_mtime, 0, {})
     set_kv(db, 'antigravity_models', model_names)
+    set_kv(db, 'antigravity_labels', labels)
     return added
 
 
@@ -358,14 +381,34 @@ def dedupe(db):
     db.commit()
 
 
+SCAN_VERSION = 3  # bump when parsing changes so stored events are read again (2: effort, 3: model names)
+
+
 def reattribute(db):
-    """When jobs.json changes, read every log again so stored events pick up the new rules. Events whose
-    logs are gone keep their old attribution."""
+    """When jobs.json or the parsers change, read every log again so stored events pick up the new rules.
+    Events whose logs are gone keep what they had."""
     mtime = os.path.getmtime(jobs.JOBS_PATH)
-    if get_kv(db, 'jobs_mtime') != mtime:
+    # The Antigravity app's model list (saved by the quota reader) names the effort of model ids that
+    # the conversation files leave unlabeled, so a change to it is a reason to read them again too.
+    labels = len(get_kv(db, 'antigravity_model_labels', {}) or {})
+    if (get_kv(db, 'jobs_mtime') != mtime or get_kv(db, 'scan_version') != SCAN_VERSION
+            or get_kv(db, 'labels_seen', 0) != labels):
         db.execute('DELETE FROM files')
         db.commit()
         set_kv(db, 'jobs_mtime', mtime)
+        set_kv(db, 'scan_version', SCAN_VERSION)
+        set_kv(db, 'labels_seen', labels)
+        split_stored_models(db)
+
+
+def split_stored_models(db):
+    """Antigravity CLI conversations are pruned, so events whose files are gone cannot be read again.
+    Move an effort suffix in their stored model name ('claude-opus-5-5-high') into the effort column."""
+    for (model,) in db.execute('SELECT DISTINCT model FROM events').fetchall():
+        base, effort = pricing.split_effort(model)
+        if effort:
+            db.execute('UPDATE events SET model=?, effort=COALESCE(effort, ?) WHERE model=?', (base, effort, model))
+    db.commit()
 
 
 def scan_all(db):

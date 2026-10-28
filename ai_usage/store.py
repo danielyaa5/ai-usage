@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS events (
     reasoning INTEGER NOT NULL DEFAULT 0,
     cost_usd REAL,                -- API-list equivalent, reported by the tool or priced here
     cost_basis TEXT,              -- reported, priced, unpriced
-    speed TEXT
+    speed TEXT,
+    effort TEXT                   -- reasoning effort as the tool reported it: low ... max, or auto
 );
 CREATE INDEX IF NOT EXISTS events_ts ON events(ts);
 CREATE INDEX IF NOT EXISTS events_session ON events(source, session);
@@ -60,7 +61,7 @@ CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT);
 '''
 
 EVENT_COLUMNS = ('id', 'ts', 'source', 'vendor', 'plan', 'tool', 'model', 'job', 'detail', 'session', 'cwd',
-                 'input', 'cache_read', 'cache_write', 'output', 'reasoning', 'cost_usd', 'cost_basis', 'speed')
+                 'input', 'cache_read', 'cache_write', 'output', 'reasoning', 'cost_usd', 'cost_basis', 'speed', 'effort')
 
 _lock = threading.RLock()
 
@@ -74,6 +75,10 @@ def connect(path=None, init=True):
     if init:
         db.execute('PRAGMA journal_mode=WAL')
         db.executescript(SCHEMA)
+        columns = {row[1] for row in db.execute('PRAGMA table_info(events)')}
+        if 'effort' not in columns:  # added 2026-10-28
+            db.execute('ALTER TABLE events ADD COLUMN effort TEXT')
+            db.commit()
     return db
 
 
@@ -88,7 +93,8 @@ def put_events(db, events):
     rows = [tuple((e.get(c) or 0) if c in tokens else e.get(c) for c in EVENT_COLUMNS) for e in events]
     placeholders = ','.join('?' * len(EVENT_COLUMNS))
     numbers = tokens + ('cost_usd', 'cost_basis', 'speed')
-    updates = ','.join(['job=excluded.job', 'detail=excluded.detail'] + [
+    updates = ','.join(['job=excluded.job', 'detail=excluded.detail', 'model=excluded.model',
+                        'effort=COALESCE(excluded.effort, events.effort)'] + [
         f'{c}=CASE WHEN excluded.output > events.output THEN excluded.{c} ELSE events.{c} END' for c in numbers])
     with _lock:
         before = db.total_changes
