@@ -86,7 +86,7 @@ def summary(db, range_name='7d', now=None):
     index = {k: i for i, k in enumerate(keys)}
 
     total, plans, by_job, by_model, by_effort = empty(), {}, {}, {}, {}
-    series = {}
+    series = {'plan': {}, 'model': {}, 'effort': {}}
     for row in rows:
         add(total, row)
         add(plans.setdefault(row['plan'], empty()), row)
@@ -105,10 +105,11 @@ def summary(db, range_name='7d', now=None):
         add(model, row)
         key = datetime.fromtimestamp(row['ts']).strftime('%Y-%m-%d %H' if bucket_size == 'hour' else '%Y-%m-%d')
         if key in index:
-            point = series.setdefault(row['plan'], [None] * len(keys))
-            if point[index[key]] is None:
-                point[index[key]] = empty()
-            add(point[index[key]], row)
+            for group, name in (('plan', row['plan']), ('model', row['model']), ('effort', effort)):
+                point = series[group].setdefault(name, [None] * len(keys))
+                if point[index[key]] is None:
+                    point[index[key]] = empty()
+                add(point[index[key]], row)
 
     jobs_out = []
     for name, job in by_job.items():
@@ -126,7 +127,22 @@ def summary(db, range_name='7d', now=None):
                                              key=lambda x: rank.get(x['effort'], 99)))
                          for m, v in by_model.items()), key=lambda m: -m['cost'])
     efforts_out = sorted(({'effort': e, **finish(s)} for e, s in by_effort.items()), key=lambda x: rank.get(x['effort'], 99))
-    series_out = {plan: [finish(p) if p else None for p in points] for plan, points in series.items()}
+    # The daily chart shows the 7 costliest models by name and folds the rest into one series.
+    top = [m['model'] for m in models_out[:7]]
+    rest = [m['model'] for m in models_out[7:]]
+    if rest:
+        merged = [None] * len(keys)
+        for name in rest:
+            for i, point in enumerate(series['model'].pop(name, [])):
+                if point:
+                    merged[i] = merged[i] or empty()
+                    for field in ('requests', 'cost', 'unpriced') + TOKEN_FIELDS:
+                        merged[i][field] += point[field]
+        series['model']['Other models'] = merged
+    order = {'plan': list(series['plan']), 'model': top + (['Other models'] if rest else []),
+             'effort': [e['effort'] for e in efforts_out]}
+    series_out = {group: {name: [finish(p) if p else None for p in points] for name, points in named.items()}
+                  for group, named in series.items()}
 
     recent = [dict(ts=r['ts'], job=r['job'], detail=r['detail'], tool=r['tool'], model=r['model'], plan=r['plan'],
                    tokens=r['input'] + r['cache_read'] + r['cache_write'] + r['output'], output=r['output'],
@@ -146,7 +162,7 @@ def summary(db, range_name='7d', now=None):
 
     return dict(
         generated_at=int(now), host='my-mac', range=range_name, bucket=bucket_size,
-        buckets=keys, series=series_out, totals=finish(total), plans=plan_info, jobs=jobs_out, models=models_out, efforts=efforts_out,
+        buckets=keys, series=series_out, series_order=order, totals=finish(total), plans=plan_info, jobs=jobs_out, models=models_out, efforts=efforts_out,
         recent=recent, limits=limits(db), sources=sources,
         status=dict(last_scan=get_kv(db, 'last_scan'), scan_result=get_kv(db, 'scan_result'),
                     probe_last=get_kv(db, 'probe_last'), probe_error=get_kv(db, 'probe_error'),

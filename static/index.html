@@ -37,6 +37,11 @@
   <section aria-labelledby="chart-h" class="card chart-card">
     <div class="card-head">
       <h2 id="chart-h">API-equivalent cost by plan</h2>
+      <div class="controls small" role="group" aria-label="Group chart by">
+        <button type="button" data-group="plan" aria-pressed="true">Plan</button>
+        <button type="button" data-group="model">Model</button>
+        <button type="button" data-group="effort">Effort</button>
+      </div>
       <div class="controls small" role="group" aria-label="Chart measure">
         <button type="button" data-metric="cost" aria-pressed="true">Cost</button>
         <button type="button" data-metric="tokens">Tokens</button>
@@ -60,6 +65,7 @@
   <section aria-labelledby="models-h" class="card">
     <h2 id="models-h">By model and effort</h2>
     <div id="effort-mix" class="effort-mix"></div>
+    <div id="model-effort-chart" class="me-chart"></div>
     <div id="models" class="table-wrap"></div>
   </section>
 

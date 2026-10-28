@@ -306,6 +306,9 @@ class ReportAndServerTest(Base):
         opus = next(m for m in data['models'] if m['model'] == 'claude-opus-5-5')
         self.assertEqual([e['effort'] for e in opus['efforts']], ['high'])
         self.assertEqual((opus['price']['input'], opus['price']['output']), (4.0, 20.0))
+        self.assertEqual(set(data['series']), {'plan', 'model', 'effort'})
+        self.assertEqual(data['series_order']['model'], ['gpt-6-astra', 'claude-opus-5-5'])
+        self.assertEqual(sorted(data['series']['effort']), ['high', 'unknown'])
 
     def test_access_checks(self):
         self.assertTrue(server.client_allowed('192.168.1.20'))

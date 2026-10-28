@@ -12,7 +12,7 @@ const ICONS = {
   critical: '<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="5" fill="currentColor"/><path d="M4 4l4 4M8 4l-4 4" stroke="#fff" stroke-width="1.5"/></svg>',
 };
 
-const state = { range: readPref('range', '7d'), metric: 'cost', data: null, showTable: false,
+const state = { range: readPref('range', '7d'), metric: 'cost', group: new URLSearchParams(location.search).get('group') || readPref('group', 'plan'), data: null, showTable: false,
   automatedOnly: readPref('automatedOnly', 'false') === 'true', expanded: new Set() };
 
 function readPref(key, fallback) {
@@ -90,6 +90,7 @@ function render() {
   }
   document.querySelectorAll('[data-range]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.range === state.range)));
   document.querySelectorAll('[data-metric]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.metric === state.metric)));
+  document.querySelectorAll('[data-group]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.group === state.group)));
   $('#chart-table-toggle').setAttribute('aria-pressed', String(state.showTable));
   $('#automated-only').checked = state.automatedOnly;
   renderPlans(d); renderTiles(d); renderChart(d); renderJobs(d); renderModels(d); renderRecent(d); renderSources(d);
@@ -184,14 +185,30 @@ function niceMax(v) {
   return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * p;
 }
 
+const GROUP_NAMES = { plan: 'plan', model: 'model', effort: 'effort' };
+
+function chartGroups(d) {
+  const named = d.series[state.group] || {};
+  if (state.group === 'plan') {
+    return PLAN_ORDER.filter((p) => named[p]).map((p) => ({ key: p, label: p, short: PLANS[p].short, color: `var(${PLANS[p].color})` }));
+  }
+  if (state.group === 'model') {
+    return d.series_order.model.filter((m) => named[m]).map((m, i) => ({
+      key: m, label: m, short: m, color: m === 'Other models' ? 'var(--cat-other)' : `var(--cat-${i + 1})` }));
+  }
+  return d.series_order.effort.filter((e) => named[e]).map((e) => ({
+    key: e, label: EFFORT_LABELS[e] || e, short: EFFORT_LABELS[e] || e, color: `var(--e-${e})` }));
+}
+
 function renderChart(d) {
-  const plans = PLAN_ORDER.filter((p) => d.series[p]);
-  $('#legend').innerHTML = plans.map((p) => `<span><span class="swatch" style="background:var(${PLANS[p].color})"></span>${esc(p)}</span>`).join('');
-  $('#chart-h').textContent = state.metric === 'cost' ? 'API-equivalent cost by plan' : 'Tokens by plan';
+  const groups = chartGroups(d);
+  const series = d.series[state.group] || {};
+  $('#legend').innerHTML = groups.map((g) => `<span><span class="swatch" style="background:${g.color}"></span>${esc(g.label)}</span>`).join('');
+  $('#chart-h').textContent = (state.metric === 'cost' ? 'API-equivalent cost by ' : 'Tokens by ') + GROUP_NAMES[state.group];
   const value = (pt) => (pt ? (state.metric === 'cost' ? pt.cost : pt.tokens) : 0);
   const n = d.buckets.length;
-  const totals = d.buckets.map((_, i) => plans.reduce((a, p) => a + value(d.series[p][i]), 0));
-  renderChartTable(d, plans, value, totals);
+  const totals = d.buckets.map((_, i) => groups.reduce((a, g) => a + value(series[g.key][i]), 0));
+  renderChartTable(d, groups, series, value, totals);
 
   const box = $('#chart');
   const W = Math.max(box.clientWidth, 280), H = box.clientHeight || 260;
@@ -220,7 +237,7 @@ function renderChart(d) {
     const x = m.left + step * i + (step - bw) / 2;
     svg += `<rect class="band" data-i="${i}" x="${m.left + step * i}" y="${m.top}" width="${step}" height="${ih}"/>`;
     let base = 0;
-    const segs = plans.map((p) => [p, value(d.series[p][i])]).filter(([, v]) => v > 0);
+    const segs = groups.map((g) => [g, value(series[g.key][i])]).filter(([, v]) => v > 0);
     segs.forEach(([p, v], k) => {
       const bottom = y(base) - (k ? 2 : 0), top = Math.min(y(base + v), bottom - 1);
       const h = bottom - top;
@@ -230,7 +247,7 @@ function renderChart(d) {
       const path = r
         ? `M${x},${bottom}V${top + r}Q${x},${top} ${x + r},${top}H${x + bw - r}Q${x + bw},${top} ${x + bw},${top + r}V${bottom}Z`
         : `M${x},${bottom}V${top}H${x + bw}V${bottom}Z`;
-      svg += `<path d="${path}" fill="var(${PLANS[p].color})"/>`;
+      svg += `<path d="${path}" fill="${p.color}"/>`;
       base += v;
     });
   });
@@ -245,9 +262,9 @@ function renderChart(d) {
     const i = Number(evt.target.dataset.i);
     if (Number.isNaN(i)) return;
     box.querySelectorAll('.band').forEach((b) => b.classList.toggle('on', Number(b.dataset.i) === i));
-    const rows = plans.map((p) => {
-      const pt = d.series[p][i];
-      return pt ? `<div class="t-row"><span><span class="swatch" style="background:var(${PLANS[p].color})"></span>${esc(PLANS[p].short)}</span><span>${esc(fmt(value(pt)))} · ${pt.requests} req</span></div>` : '';
+    const rows = groups.map((g) => {
+      const pt = series[g.key][i];
+      return pt ? `<div class="t-row"><span><span class="swatch" style="background:${g.color}"></span>${esc(g.short)}</span><span>${esc(fmt(value(pt)))} · ${pt.requests} req</span></div>` : '';
     }).join('');
     tip.innerHTML = `<div class="t-head">${esc(bucketLabel(d.buckets[i]))}${d.bucket === 'hour' ? ' hour' : ''}</div>${rows || '<div class="muted">No requests</div>'}<div class="t-row t-total"><span>Total</span><span>${esc(fmt(totals[i]))}</span></div>`;
     tip.hidden = false;
@@ -264,14 +281,14 @@ function renderChart(d) {
   });
 }
 
-function renderChartTable(d, plans, value, totals) {
+function renderChartTable(d, groups, series, value, totals) {
   const wrap = $('#chart-table');
   wrap.hidden = !state.showTable;
   if (!state.showTable) return;
   const fmt = state.metric === 'cost' ? usd : tokens;
-  const head = `<tr><th>${d.bucket === 'hour' ? 'Hour' : 'Day'}</th>${plans.map((p) => `<th class="num">${esc(PLANS[p].short)}</th>`).join('')}<th class="num">Total</th></tr>`;
-  const body = d.buckets.map((key, i) => totals[i] ? `<tr><td>${esc(bucketLabel(key))}</td>${plans.map((p) => `<td class="num">${esc(fmt(value(d.series[p][i])))}</td>`).join('')}<td class="num">${esc(fmt(totals[i]))}</td></tr>` : '').reverse().join('');
-  wrap.innerHTML = `<table><thead>${head}</thead><tbody>${body || '<tr><td colspan="9" class="muted">No usage in this range</td></tr>'}</tbody></table>`;
+  const head = `<tr><th>${d.bucket === 'hour' ? 'Hour' : 'Day'}</th>${groups.map((g) => `<th class="num">${esc(g.short)}</th>`).join('')}<th class="num">Total</th></tr>`;
+  const body = d.buckets.map((key, i) => totals[i] ? `<tr><td>${esc(bucketLabel(key))}</td>${groups.map((g) => `<td class="num">${esc(fmt(value(series[g.key][i])))}</td>`).join('')}<td class="num">${esc(fmt(totals[i]))}</td></tr>` : '').reverse().join('');
+  wrap.innerHTML = `<table><thead>${head}</thead><tbody>${body || `<tr><td colspan="${groups.length + 2}" class="muted">No usage in this range</td></tr>`}</tbody></table>`;
 }
 
 function planDot(tools) {
@@ -289,16 +306,16 @@ function renderJobs(d) {
       <td class="wrap"><span class="chev">›</span> ${planDot(j.tools)}${esc(j.job)}${j.automated ? '' : '<span class="tag">you</span>'}${details}</td>
       <td class="hide-sm">${esc(j.tools.join(', '))}</td>
       <td class="num">${j.requests.toLocaleString()}</td>
-      <td class="num">${tokens(j.tokens)}</td>
+      <td class="num hide-sm">${tokens(j.tokens)}</td>
       <td class="num hide-sm">${tokens(j.output)}</td>
       <td class="num"><b>${usd(j.cost)}</b></td>
       <td class="hide-sm">${esc(ago(j.last))}</td></tr>`;
     if (open) {
-      html += j.models.map((mo) => `<tr class="child"><td>${esc(mo.model)}${mo.effort !== 'unknown' ? ` · ${esc(EFFORT_LABELS[mo.effort] || mo.effort)}` : ''}</td><td class="hide-sm"></td><td class="num">${mo.requests.toLocaleString()}</td><td class="num">${tokens(mo.tokens)}</td><td class="num hide-sm">${tokens(mo.output)}</td><td class="num">${usd(mo.cost)}</td><td class="hide-sm"></td></tr>`).join('');
+      html += j.models.map((mo) => `<tr class="child"><td>${esc(mo.model)}${mo.effort !== 'unknown' ? ` · ${esc(EFFORT_LABELS[mo.effort] || mo.effort)}` : ''}</td><td class="hide-sm"></td><td class="num">${mo.requests.toLocaleString()}</td><td class="num hide-sm">${tokens(mo.tokens)}</td><td class="num hide-sm">${tokens(mo.output)}</td><td class="num">${usd(mo.cost)}</td><td class="hide-sm"></td></tr>`).join('');
     }
     return html;
   }).join('');
-  $('#jobs').innerHTML = `<table><thead><tr><th>Job or app</th><th class="hide-sm">Tool</th><th class="num">Requests</th><th class="num">Tokens</th><th class="num hide-sm">Output</th><th class="num">API value</th><th class="hide-sm">Last request</th></tr></thead>
+  $('#jobs').innerHTML = `<table><thead><tr><th>Job or app</th><th class="hide-sm">Tool</th><th class="num">Requests</th><th class="num hide-sm">Tokens</th><th class="num hide-sm">Output</th><th class="num">API value</th><th class="hide-sm">Last request</th></tr></thead>
     <tbody>${rows || '<tr><td colspan="7" class="muted">No usage in this range</td></tr>'}</tbody></table>`;
   $('#jobs').querySelectorAll('tr.expandable').forEach((tr) => {
     const toggle = () => {
@@ -338,8 +355,42 @@ function renderEffortMix(d) {
   $('#effort-mix').innerHTML = `<div class="mix-label">Share of API value by effort</div><div class="mix-bar" role="img" aria-label="Share of API value by effort">${bar}</div><div class="mix-legend">${legend}</div>`;
 }
 
+function renderModelEffortChart(d) {
+  const box = $('#model-effort-chart');
+  const models = d.models.filter((m) => m.cost > 0);
+  if (!models.length) { box.innerHTML = ''; return; }
+  const max = Math.max(...models.map((m) => m.cost));
+  box.innerHTML = '<div class="mix-label">API value by model, split by effort</div>' + models.map((m, r) => `
+    <div class="me-row">
+      <div class="me-name">${esc(m.model)}</div>
+      <div class="me-track"><div class="me-bar" style="width:${Math.max((m.cost / max) * 100, 0.5)}%">${m.efforts.filter((e) => e.cost > 0).map((e) =>
+        `<span class="seg e-${esc(e.effort)}" style="width:${(e.cost / m.cost) * 100}%" data-m="${r}" data-e="${esc(e.effort)}"></span>`).join('')}</div></div>
+      <div class="me-value">${usd(m.cost)}</div>
+    </div>`).join('');
+  const tip = $('#tooltip');
+  box.querySelectorAll('.seg').forEach((seg) => {
+    const show = (evt) => {
+      const m = models[Number(seg.dataset.m)];
+      const e = m.efforts.find((x) => x.effort === seg.dataset.e);
+      tip.innerHTML = `<div class="t-head">${esc(m.model)}</div>
+        <div class="t-row"><span>${effortTag(e.effort)}</span><span>${usd(e.cost)}</span></div>
+        <div class="t-row"><span>Share of model</span><span>${Math.round((e.cost / m.cost) * 100)}%</span></div>
+        <div class="t-row"><span>Requests</span><span>${e.requests.toLocaleString()}</span></div>
+        <div class="t-row t-total"><span>Per request</span><span>${perRequest(e)}</span></div>`;
+      tip.hidden = false;
+      const tw = tip.offsetWidth, th = tip.offsetHeight;
+      tip.style.left = Math.min(window.innerWidth - tw - 8, Math.max(8, evt.clientX + 12)) + 'px';
+      tip.style.top = Math.max(8, evt.clientY - th - 12) + 'px';
+    };
+    seg.addEventListener('pointermove', show);
+    seg.addEventListener('pointerdown', show);
+    seg.addEventListener('pointerleave', () => { tip.hidden = true; });
+  });
+}
+
 function renderModels(d) {
   renderEffortMix(d);
+  renderModelEffortChart(d);
   const plansCell = (mo) => mo.plans.map((p) => `<span class="dot" style="background:var(${(PLANS[p] || PLANS['Claude Max 20x']).color})"></span>${esc(PLANS[p] ? PLANS[p].short : p)}`).join(' ');
   const cells = (x) => `<td class="num hide-sm">${x.requests.toLocaleString()}</td>
     <td class="num">${perRequest(x)}</td>
@@ -382,6 +433,9 @@ function renderSources(d) {
 
 document.querySelectorAll('[data-range]').forEach((b) => b.addEventListener('click', () => {
   state.range = b.dataset.range; writePref('range', state.range); load();
+}));
+document.querySelectorAll('[data-group]').forEach((b) => b.addEventListener('click', () => {
+  state.group = b.dataset.group; writePref('group', state.group); render();
 }));
 document.querySelectorAll('[data-metric]').forEach((b) => b.addEventListener('click', () => {
   state.metric = b.dataset.metric; render();
