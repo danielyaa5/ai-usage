@@ -1,23 +1,31 @@
-"""Attribute usage to the job or app that caused it, using jobs.json."""
+"""Attribute usage to the job or app that caused it, using jobs.local.json or else jobs.json."""
 import json
 import os
 import re
 from pathlib import Path
 
+# jobs.json holds example rules. Your own rules go in jobs.local.json, which git ignores; when it
+# exists it is used instead.
 JOBS_PATH = Path(__file__).with_name('jobs.json')
-_cache = {'mtime': None, 'data': None}
+LOCAL_JOBS_PATH = Path(__file__).with_name('jobs.local.json')
+_cache = {'key': None, 'data': None}
+
+
+def jobs_path():
+    return LOCAL_JOBS_PATH if LOCAL_JOBS_PATH.exists() else JOBS_PATH
 
 
 def rules():
-    mtime = os.path.getmtime(JOBS_PATH)
-    if _cache['mtime'] != mtime:
-        data = json.loads(JOBS_PATH.read_text())
+    path = jobs_path()
+    key = (str(path), os.path.getmtime(path))
+    if _cache['key'] != key:
+        data = json.loads(path.read_text())
         for rule in data.get('prompt_rules', []):
             if 'regex' in rule:
                 rule['_re'] = re.compile(rule['regex'], re.S)
         for rule in data.get('cwd_rules', []):
             rule['_prefix'] = os.path.realpath(os.path.expanduser(rule['prefix']))
-        _cache.update(mtime=mtime, data=data)
+        _cache.update(key=key, data=data)
     return _cache['data']
 
 

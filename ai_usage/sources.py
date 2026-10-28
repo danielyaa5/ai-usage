@@ -385,9 +385,10 @@ SCAN_VERSION = 3  # bump when parsing changes so stored events are read again (2
 
 
 def reattribute(db):
-    """When jobs.json or the parsers change, read every log again so stored events pick up the new rules.
+    """When the job rules or the parsers change, read every log again so stored events pick up the new rules.
     Events whose logs are gone keep what they had."""
-    mtime = os.path.getmtime(jobs.JOBS_PATH)
+    path = jobs.jobs_path()
+    mtime = f'{path.name}:{os.path.getmtime(path)}'
     # The Antigravity app's model list (saved by the quota reader) names the effort of model ids that
     # the conversation files leave unlabeled, so a change to it is a reason to read them again too.
     labels = len(get_kv(db, 'antigravity_model_labels', {}) or {})

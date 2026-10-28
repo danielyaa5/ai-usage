@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""AI usage dashboard for my-mac.
+"""AI usage dashboard for this Mac.
 
 Two listeners:
   * the dashboard (default 0.0.0.0:8796), read-only, answering only home-network, Tailscale and
-    loopback clients;
+    loopback clients that use this Mac's name, an IP address or a name listed in local.json;
   * an OTLP/HTTP JSON receiver on 127.0.0.1:4318 for Claude Code and Codex telemetry.
 A worker thread rescans the tools' local logs every minute, probes Claude's plan limits, asks
 Codex for ChatGPT's and reads Antigravity's from the running Antigravity app.
@@ -20,11 +20,12 @@ from ipaddress import ip_address, ip_network
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from . import antigravity_quota, codex_limits, probe, report, sources, store, telemetry
+from . import antigravity_quota, codex_limits, local, probe, report, sources, store, telemetry
 
 STATIC = Path(__file__).resolve().parents[1] / 'static'
 TAILSCALE = ip_network('100.64.0.0/10')
-HOSTS = {'localhost', 'my-mac', 'my-mac.local', 'my-mac', 'my-mac.example.ts.net'}
+HOSTS = {'localhost', local.hostname(), local.hostname() + '.local',
+         *(h.lower() for h in local.settings().get('allowed_hosts', []))}
 TYPES = {'.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
          '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml'}
 MAX_BODY = 16 * 1024 * 1024
@@ -43,7 +44,7 @@ def client_allowed(address):
 
 def host_allowed(header):
     """Refuse unexpected Host names so a web page elsewhere cannot read the API by DNS rebinding."""
-    host = urlsplit('http://' + (header or '')).hostname or ''
+    host = (urlsplit('http://' + (header or '')).hostname or '').lower()
     if host in HOSTS:
         return True
     try:
@@ -211,6 +212,8 @@ def main():
     parser.add_argument('--host', default='0.0.0.0')
     parser.add_argument('--port', type=int, default=8796)
     parser.add_argument('--otlp-port', type=int, default=4318)
+    parser.add_argument('--allow-host', action='append', default=[],
+                        help='another Host name to answer to, such as a Tailscale MagicDNS name; repeatable')
     parser.add_argument('--scan-interval', type=int, default=60)
     parser.add_argument('--probe-interval', type=int, default=1200, help='seconds between Claude limit probes; 0 disables')
     parser.add_argument('--quota-interval', type=int, default=300, help='seconds between Antigravity quota reads; 0 disables')
@@ -219,6 +222,7 @@ def main():
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 
+    HOSTS.update(h.lower() for h in args.allow_host)
     store.connect(args.db).close()
     Handler.db_path = args.db
     collector = ThreadingHTTPServer(('127.0.0.1', args.otlp_port), Collector)

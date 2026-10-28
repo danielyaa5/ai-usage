@@ -1,0 +1,7 @@
+{
+  "name": "Studio",
+  "allowed_hosts": ["my-mac.example-tailnet.ts.net"],
+  "launch_agents": {
+    "com.example.nightly-report": "nightly-report"
+  }
+}

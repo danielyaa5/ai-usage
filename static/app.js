@@ -86,7 +86,7 @@ function render() {
   const lag = Date.now() / 1000 - (d.status.last_scan || 0);
   if (lag > 300) {
     $('#error').hidden = false;
-    $('#error').textContent = `Usage data is ${ago(d.status.last_scan).replace(' ago', '')} old. The collector on the M2 is behind, usually because the Mac is overloaded; it restarts itself if scans stop for 15 minutes.`;
+    $('#error').textContent = `Usage data is ${ago(d.status.last_scan).replace(' ago', '')} old. The collector on this Mac is behind, usually because the Mac is overloaded; it restarts itself if scans stop for 15 minutes.`;
   }
   document.querySelectorAll('[data-range]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.range === state.range)));
   document.querySelectorAll('[data-metric]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.metric === state.metric)));
@@ -133,7 +133,7 @@ function renderPlans(d) {
     if (meta.vendor === 'anthropic' && d.status.probe_error) body += `<p class="status warning">${ICONS.warning} Probe: ${esc(d.status.probe_error)}</p>`;
     if (meta.vendor === 'openai' && d.status.codex_limits_error) body += `<p class="status warning">${ICONS.warning} ${esc(d.status.codex_limits_error)}</p>`;
     if (meta.vendor === 'google' && d.status.antigravity_quota_error) body += `<p class="status warning">${ICONS.warning} ${esc(d.status.antigravity_quota_error)}</p>`;
-    const title = meta.vendor === 'google' && d.status.antigravity_tier ? `${d.status.antigravity_tier} (Antigravity)` : name;
+    const title = plan.label || (meta.vendor === 'google' && d.status.antigravity_tier ? `${d.status.antigravity_tier} (Antigravity)` : name);
     const value = plan.cost || 0;
     const compare = plan.prorated_usd ? ` vs <b>${usd(plan.prorated_usd)}</b> of plan price` : '';
     return `<article class="plan">

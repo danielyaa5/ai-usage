@@ -12,7 +12,7 @@
   <header class="top">
     <div class="title">
       <h1>AI usage</h1>
-      <p class="sub">Claude, ChatGPT and Gemini on <span id="host">my-mac</span> · <span id="updated">loading…</span></p>
+      <p class="sub">Claude, ChatGPT and Gemini on <span id="host">this Mac</span> · <span id="updated">loading…</span></p>
     </div>
     <div class="controls" role="group" aria-label="Time range">
       <button type="button" data-range="today">Today</button>
@@ -30,7 +30,7 @@
   </section>
 
   <section aria-labelledby="totals-h">
-    <h2 id="totals-h">This period on the M2</h2>
+    <h2 id="totals-h">This period on this Mac</h2>
     <div id="tiles" class="tiles"></div>
   </section>
 
@@ -85,7 +85,7 @@
     <div id="sources"></div>
     <ul class="notes">
       <li>Usage made on this Mac only. Plan limits are account-wide, so they include your other devices.</li>
-      <li>Claude Code and Codex sessions are read from their logs; Antigravity from its conversation files. Calls that save no log (ai-trader's and price-watch's <code>claude -p</code> and <code>codex exec</code>) are counted through local telemetry from the time it was switched on.</li>
+      <li>Claude Code and Codex sessions are read from their logs; Antigravity from its conversation files. Calls that save no log (background jobs' <code>claude -p --no-session-persistence</code> and <code>codex exec --ephemeral</code>) are counted through local telemetry from the time it was switched on.</li>
       <li>The Claude limit is read with a one-word Haiku request every 20 minutes. ChatGPT limits are asked of Codex every 10 minutes (no model usage). Antigravity limits are read every 5 minutes from the Antigravity app's local helper while the app is open on this Mac (no model usage).</li>
       <li id="pricing-note"></li>
     </ul>

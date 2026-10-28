@@ -8,7 +8,37 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
-from ai_usage import antigravity_quota, codex_limits, jobs, pricing, probe, protowire, report, server, sources, store, telemetry
+from ai_usage import antigravity_quota, codex_limits, jobs, local, pricing, probe, protowire, report, server, sources, store, telemetry
+
+# Job rules for the tests, independent of the example jobs.json and of any jobs.local.json.
+RULES = {
+    'telemetry_attribute': 'ai_usage.job',
+    'telemetry_jobs': {'nightly-report-health': 'nightly-report'},
+    'prompt_rules': [
+        {'contains': 'TELEMETRY_JSON', 'job': 'nightly-report', 'detail': 'health monitor'},
+        {'regex': "^This is an automated (?:scheduled |daily )?run of (?:the )?(?P<name>[^.]+?)(?: \\(|\\.|$)",
+         'job': 'Scheduled: {name}'},
+    ],
+    'cwd_rules': [{'prefix': '~/Developer/nightly-report', 'job': 'nightly-report'}],
+    'scheduled_names': {},
+}
+_rules_dir = tempfile.TemporaryDirectory()
+_patches = []
+
+
+def setUpModule():
+    path = Path(_rules_dir.name) / 'jobs.json'
+    path.write_text(json.dumps(RULES))
+    _patches.extend([mock.patch.object(jobs, 'JOBS_PATH', path),
+                     mock.patch.object(jobs, 'LOCAL_JOBS_PATH', Path(_rules_dir.name) / 'missing.json')])
+    for patch in _patches:
+        patch.start()
+
+
+def tearDownModule():
+    for patch in _patches:
+        patch.stop()
+    _rules_dir.cleanup()
 
 
 def varint(n):
@@ -67,13 +97,13 @@ class JobsTest(unittest.TestCase):
                          'Scheduled: Evening Brief')
         self.assertEqual(jobs.from_prompt("This is an automated daily run of the Daily Portfolio Digest."),
                          ('Scheduled: Daily Portfolio Digest', None))
-        self.assertEqual(jobs.from_prompt('CRITICAL INSTRUCTION: Do NOT call any tools...\nTELEMETRY_JSON: {}'),
-                         ('ai-trader', 'health monitor'))
+        self.assertEqual(jobs.from_prompt('Check the service health...\nTELEMETRY_JSON: {}'),
+                         ('nightly-report', 'health monitor'))
         self.assertIsNone(jobs.from_prompt('fix my widget'))
 
     def test_scheduled_names_and_telemetry(self):
         self.assertEqual(jobs.scheduled('weekly-inbox-digest'), 'Scheduled: Weekly Inbox Digest')
-        self.assertEqual(jobs.from_telemetry({'ai_usage.job': 'ai-trader-health'}), 'ai-trader')
+        self.assertEqual(jobs.from_telemetry({'ai_usage.job': 'nightly-report-health'}), 'nightly-report')
         self.assertIsNone(jobs.from_telemetry({}))
 
 
@@ -169,14 +199,14 @@ class AntigravityTest(Base):
         self.assertEqual(protowire.usage(usage_msg(5, 10, 3, 2))['reasoning'], 2)
         base = self.dir / 'agy'
         (base / 'conversations').mkdir(parents=True)
-        self.make_db(base / 'conversations/abc.db', 'CRITICAL INSTRUCTION: Do NOT call any tools.\nTELEMETRY_JSON: {}')
+        self.make_db(base / 'conversations/abc.db', 'Check the service health.\nTELEMETRY_JSON: {}')
         sources.scan_antigravity(self.db, {'antigravity_cli': (base, 'Antigravity CLI')})
         rows = self.events()
         self.assertEqual(len(rows), 1)
         row = rows[0]
         self.assertEqual((row['model'], row['input'], row['output'], row['reasoning'], row['ts']),
                          ('gemini-3.8-flash', 16947, 931, 840, 1793072728))
-        self.assertEqual((row['job'], row['detail'], row['plan']), ('ai-trader', 'health monitor', 'Google (Antigravity)'))
+        self.assertEqual((row['job'], row['detail'], row['plan']), ('nightly-report', 'health monitor', 'Google (Antigravity)'))
         self.assertEqual(row['effort'], 'high')
 
     def test_effort_from_model_suffix_and_app_labels(self):
@@ -194,11 +224,11 @@ class TelemetryTest(Base):
                                              'scopeLogs': [{'logRecords': [{'attributes': kv(attrs)}]}]}]})
 
     def test_claude_and_codex_records(self):
-        claude = self.otlp({'service.name': 'claude-code', 'ai_usage.job': 'price-watch'},
+        claude = self.otlp({'service.name': 'claude-code', 'ai_usage.job': 'price-checker'},
                            {'event.name': 'api_request', 'event.timestamp': '2026-10-27T04:10:47.863Z',
                             'request_id': 'req_9', 'model': 'claude-opus-5-5', 'input_tokens': 2, 'output_tokens': 4,
                             'cache_read_tokens': 10, 'cache_creation_tokens': 0, 'cost_usd': 0.5, 'session.id': 'x', 'effort': 'max'})
-        codex = self.otlp({'service.name': 'codex_exec', 'ai_usage.job': 'ai-trader'},
+        codex = self.otlp({'service.name': 'codex_exec', 'ai_usage.job': 'nightly-report'},
                           {'event.name': 'codex.sse_event', 'event.kind': 'response.completed', 'model': 'gpt-6-astra',
                            'input_token_count': '21146', 'cached_token_count': '10112', 'output_token_count': '5',
                            'reasoning_token_count': '0', 'conversation.id': 'conv', 'event.timestamp': '2026-10-27T04:11:22Z',
@@ -207,9 +237,9 @@ class TelemetryTest(Base):
         self.assertEqual(telemetry.ingest_logs(self.db, codex), 1)
         rows = {r['source']: r for r in self.events()}
         self.assertEqual((rows['otel_claude']['job'], rows['otel_claude']['cost_usd'], rows['otel_claude']['cost_basis']),
-                         ('price-watch', 0.5, 'reported'))
+                         ('price-checker', 0.5, 'reported'))
         self.assertEqual((rows['otel_codex']['job'], rows['otel_codex']['input'], rows['otel_codex']['cache_read']),
-                         ('ai-trader', 11034, 10112))
+                         ('nightly-report', 11034, 10112))
         self.assertEqual((rows['otel_claude']['effort'], rows['otel_codex']['effort']), ('max', 'xhigh'))
 
     def test_codex_telemetry_yields_to_session_log(self):
@@ -272,9 +302,9 @@ class StoreTest(Base):
     def test_repeat_refreshes_job_and_keeps_larger_counts(self):
         base = dict(id='x', ts=1, source='antigravity_cli', vendor='google', plan='p', tool='t', model='m')
         store.put_events(self.db, [dict(base, job='Antigravity CLI (other)', input=10, output=50, cost_usd=1.0)])
-        store.put_events(self.db, [dict(base, job='Gate camera (shadow AI)', input=10, output=20, cost_usd=0.5)])
+        store.put_events(self.db, [dict(base, job='Camera check', input=10, output=20, cost_usd=0.5)])
         row = self.events()[0]
-        self.assertEqual((row['job'], row['output'], row['cost_usd']), ('Gate camera (shadow AI)', 50, 1.0))
+        self.assertEqual((row['job'], row['output'], row['cost_usd']), ('Camera check', 50, 1.0))
 
 
 class MigrationTest(Base):
@@ -319,9 +349,31 @@ class ReportAndServerTest(Base):
         self.assertTrue(server.client_allowed('100.101.102.103'))
         self.assertTrue(server.client_allowed('::ffff:127.0.0.1'))
         self.assertFalse(server.client_allowed('8.8.8.8'))
-        self.assertTrue(server.host_allowed('my-mac.local:8796'))
-        self.assertTrue(server.host_allowed('192.168.1.33:8796'))
-        self.assertFalse(server.host_allowed('evil.example:8796'))
+        with mock.patch.object(server, 'HOSTS', {'localhost', 'my-mac', 'my-mac.local', 'my-mac.example.ts.net'}):
+            self.assertTrue(server.host_allowed('my-mac.local:8796'))
+            self.assertTrue(server.host_allowed('My-Mac.Example.ts.net:8796'))
+            self.assertTrue(server.host_allowed('192.168.1.33:8796'))
+            self.assertFalse(server.host_allowed('evil.example:8796'))
+            self.assertFalse(server.host_allowed('other-mac.local:8796'))
+
+    def test_hostname_and_local_settings(self):
+        with mock.patch('socket.gethostname', return_value='My-Mac.local'):
+            self.assertEqual(local.hostname(), 'my-mac')
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'local.json'
+            with mock.patch.object(local, 'PATH', path):
+                self.assertEqual(local.settings(), {})
+                path.write_text(json.dumps({'allowed_hosts': ['my-mac.example.ts.net']}))
+                self.assertEqual(local.settings()['allowed_hosts'], ['my-mac.example.ts.net'])
+
+    def test_local_job_rules_take_precedence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            override = Path(tmp) / 'jobs.local.json'
+            override.write_text(json.dumps({'prompt_rules': [{'startswith': 'Tidy', 'job': 'Cleanup'}]}))
+            with mock.patch.object(jobs, 'LOCAL_JOBS_PATH', override):
+                self.assertEqual(jobs.jobs_path(), override)
+                self.assertEqual(jobs.from_prompt('Tidy the downloads folder'), ('Cleanup', None))
+        self.assertIsNone(jobs.from_prompt('Tidy the downloads folder'))
 
 
 if __name__ == '__main__':

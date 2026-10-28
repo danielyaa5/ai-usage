@@ -2,7 +2,7 @@
 """Install the AI usage dashboard as a LaunchAgent and connect the jobs whose model calls leave no logs.
 
     python3 install.py                 # install or restart the dashboard (port 8796, OTLP on 127.0.0.1:4318)
-    python3 install.py --wire-jobs     # add telemetry settings to the job LaunchAgents listed in JOBS
+    python3 install.py --wire-jobs     # add telemetry settings to the job LaunchAgents listed in local.json
     python3 install.py --codex         # add an [otel] exporter to ~/.codex/config.toml
     python3 install.py --unwire        # undo --wire-jobs and --codex
 
@@ -19,25 +19,22 @@ import sys
 import time
 from pathlib import Path
 
+from ai_usage import local
+
 ROOT = Path(__file__).resolve().parent
 LABEL = 'com.danielyakobian.ai-usage'
 AGENTS = Path.home() / 'Library/LaunchAgents'
 PLIST = AGENTS / f'{LABEL}.plist'
 LOG = Path.home() / 'Library/Logs/ai-usage.log'
 BACKUPS = Path.home() / 'Library/Application Support/ai-usage/backups'
-PYTHON = '/opt/homebrew/bin/python3'
+PYTHON = '/opt/homebrew/bin/python3' if Path('/opt/homebrew/bin/python3').exists() else sys.executable
 OTLP_PORT = 4318
 CODEX_CONFIG = Path.home() / '.codex/config.toml'
 CODEX_MARK = '# ai-usage dashboard (~/Developer/ai-usage): report each Codex model request to the local collector.'
 
-# LaunchAgent label -> job name carried in OTEL_RESOURCE_ATTRIBUTES (mapped to a display name in jobs.json).
-JOBS = {
-    'com.danielyakobian.ai-trader-runner': 'ai-trader',
-    'com.danielyakobian.ai-trader-health-monitor': 'ai-trader-health',
-    'com.danielyakobian.ai-trader-watchdog': 'ai-trader-watchdog',
-    'com.danielyakobian.price-watch': 'price-watch',
-    'com.danielyakobian.m2-server-page': 'm2-server-page',
-}
+# LaunchAgent label -> job name carried in OTEL_RESOURCE_ATTRIBUTES (mapped to a display name by the job
+# rules). Set "launch_agents" in local.json; see local.example.json.
+JOBS = local.settings().get('launch_agents', {})
 
 
 def telemetry_env(job):
@@ -81,13 +78,13 @@ def reload(label, plist):
         raise SystemExit(f'bootstrap {label} failed: {result.stderr.strip()}')
 
 
-def install_dashboard():
+def install_dashboard(claude_probe=True):
     if not Path(PYTHON).exists():
         raise SystemExit(f'{PYTHON} not found')
     config = {
         'Label': LABEL,
         'ProgramArguments': [PYTHON, '-m', 'ai_usage.server', '--host', '0.0.0.0', '--port', '8796',
-                             '--otlp-port', str(OTLP_PORT)],
+                             '--otlp-port', str(OTLP_PORT)] + ([] if claude_probe else ['--probe-interval', '0']),
         'WorkingDirectory': str(ROOT),
         'EnvironmentVariables': {
             'PATH': f'{Path.home()}/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin',
@@ -107,10 +104,12 @@ def install_dashboard():
     with open(PLIST, 'wb') as handle:
         plistlib.dump(config, handle)
     reload(LABEL, PLIST)
-    print(f'Installed {LABEL}: http://my-mac.local:8796 (log {LOG})')
+    print(f'Installed {LABEL}: http://{local.hostname()}.local:8796 (log {LOG})')
 
 
 def wire_jobs(restart_running, remove=False):
+    if not JOBS:
+        print('No jobs to wire: add "launch_agents" to local.json (see local.example.json).')
     for label, job in JOBS.items():
         plist = AGENTS / f'{label}.plist'
         if not plist.exists():
@@ -176,6 +175,7 @@ def main():
     parser.add_argument('--unwire', action='store_true')
     parser.add_argument('--restart-running', action='store_true')
     parser.add_argument('--skip-dashboard', action='store_true')
+    parser.add_argument('--no-claude-probe', action='store_true', help='do not spend a Haiku request every 20 minutes to read Claude limits')
     args = parser.parse_args()
     if sys.platform != 'darwin':
         raise SystemExit('macOS only')
@@ -184,7 +184,7 @@ def main():
         wire_codex(remove=True)
         return
     if not args.skip_dashboard:
-        install_dashboard()
+        install_dashboard(claude_probe=not args.no_claude_probe)
     if args.wire_jobs:
         wire_jobs(args.restart_running)
     if args.codex:

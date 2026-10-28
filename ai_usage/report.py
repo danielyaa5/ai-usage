@@ -3,7 +3,7 @@ import json
 import time
 from datetime import datetime, timedelta
 
-from . import pricing
+from . import local, pricing
 from .store import get_kv
 
 RANGES = {'today': None, '7d': 7, '30d': 30, 'all': None}
@@ -127,7 +127,7 @@ def summary(db, range_name='7d', now=None):
                                              key=lambda x: rank.get(x['effort'], 99)))
                          for m, v in by_model.items()), key=lambda m: -m['cost'])
     efforts_out = sorted(({'effort': e, **finish(s)} for e, s in by_effort.items()), key=lambda x: rank.get(x['effort'], 99))
-    # Quoted list prices for the models Daniel compares, with what each effort cost per request here.
+    # Quoted list prices for the models featured in pricing.json, with what each effort cost per request here.
     used = {m['model']: m for m in models_out}
     price_table = []
     for name in pricing.table().get('featured', []):
@@ -166,11 +166,11 @@ def summary(db, range_name='7d', now=None):
     for name, info in table.get('plans', {}).items():
         used = plans.get(name, empty())
         monthly = info.get('monthly_usd')
-        plan_info.append(dict(plan=name, vendor=info.get('vendor'), monthly_usd=monthly, note=info.get('note'),
+        plan_info.append(dict(plan=name, label=info.get('label'), vendor=info.get('vendor'), monthly_usd=monthly, note=info.get('note'),
                               prorated_usd=round(monthly * days / 30.4, 2) if monthly else None, **finish(dict(used))))
 
     return dict(
-        generated_at=int(now), host='my-mac', range=range_name, bucket=bucket_size,
+        generated_at=int(now), host=local.display_name(), range=range_name, bucket=bucket_size,
         buckets=keys, series=series_out, series_order=order, totals=finish(total), plans=plan_info, jobs=jobs_out, models=models_out, efforts=efforts_out, price_table=price_table,
         recent=recent, limits=limits(db), sources=sources,
         status=dict(last_scan=get_kv(db, 'last_scan'), scan_result=get_kv(db, 'scan_result'),

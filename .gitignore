@@ -1,3 +1,7 @@
 __pycache__/
 *.pyc
 .DS_Store
+
+# Machine-specific settings and job rules (see local.example.json and ai_usage/jobs.json)
+local.json
+ai_usage/jobs.local.json
