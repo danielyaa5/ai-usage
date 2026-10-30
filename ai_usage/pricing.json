@@ -136,8 +136,8 @@
     },
     "Google (Antigravity)": {
       "vendor": "google",
-      "monthly_usd": 99.99,
-      "note": "Google AI Ultra, as Antigravity reports the tier. Ultra has $99.99 and $199.99 US tiers since May 2026; Antigravity offers an upgrade to a higher Ultra plan, so this assumes $99.99. Edit if your bill differs."
+      "monthly_usd": 199.99,
+      "note": "Google AI Ultra ($199.99/mo top US tier; checked 2026-10-29). GetUserStatus also distinguishes the $99.99 and $199.99 Ultra tiers by whether an upgrade URI is present. Edit if your bill differs."
     }
   },
   "source_urls": {

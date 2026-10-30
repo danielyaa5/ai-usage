@@ -82,6 +82,22 @@ def iso_ts(value):
         return None
 
 
+def tier_monthly_usd(user_tier):
+    """Infer standard US monthly price from Antigravity's GetUserStatus userTier object."""
+    if not isinstance(user_tier, dict):
+        return None
+    tier_id = (user_tier.get('id') or '').lower()
+    desc = (user_tier.get('description') or user_tier.get('name') or '').lower()
+    if tier_id == 'g1-ultra-tier' or 'ultra' in desc:
+        if user_tier.get('upgradeSubscriptionUri'):
+            return 99.99
+        if 'best google ai plan' in (user_tier.get('upgradeSubscriptionText') or '').lower():
+            return 199.99
+    if tier_id == 'g1-pro-tier' or desc == 'google ai pro':
+        return 19.99
+    return None
+
+
 def record(db, summary, tier=None, observed_at=None):
     """Store each bucket of a RetrieveUserQuotaSummary response as a plan limit. Returns the count."""
     groups = (summary.get('response') or summary).get('groups') or []
@@ -120,9 +136,13 @@ def poll(db):
             try:
                 status = call(port, token, 'GetUserStatus', {'metadata': {'ideName': 'antigravity', 'locale': 'en'}})
                 user = status.get('userStatus') or {}
-                tier = (user.get('userTier') or {}).get('description')
+                user_tier = user.get('userTier') or {}
+                tier = user_tier.get('description')
                 if tier:
                     set_kv(db, 'antigravity_tier', tier)
+                monthly = tier_monthly_usd(user_tier)
+                if monthly is not None:
+                    set_kv(db, 'antigravity_monthly_usd', monthly)
                 configs = (user.get('cascadeModelConfigData') or {}).get('clientModelConfigs') or []
                 model_labels = {c['modelOrAlias']['model']: c['label'] for c in configs
                                 if c.get('label') and (c.get('modelOrAlias') or {}).get('model')}

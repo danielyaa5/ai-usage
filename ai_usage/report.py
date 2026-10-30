@@ -162,10 +162,13 @@ def summary(db, range_name='7d', now=None):
 
     table = pricing.table()
     days = max((now - start) / 86400, 1 / 24) if start else max(len(keys), 1)
+    agy_monthly = get_kv(db, 'antigravity_monthly_usd')
     plan_info = []
     for name, info in table.get('plans', {}).items():
         used = plans.get(name, empty())
         monthly = info.get('monthly_usd')
+        if info.get('vendor') == 'google' and agy_monthly and monthly in (None, 19.99, 99.99, 199.99):
+            monthly = agy_monthly
         plan_info.append(dict(plan=name, label=info.get('label'), vendor=info.get('vendor'), monthly_usd=monthly, note=info.get('note'),
                               prorated_usd=round(monthly * days / 30.4, 2) if monthly else None, **finish(dict(used))))
 

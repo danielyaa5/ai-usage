@@ -287,6 +287,19 @@ class AntigravityQuotaTest(Base):
         self.assertEqual(limits[0]['plan'], 'Google AI Ultra')
         self.assertEqual(limits[0]['resets_at'], int(datetime(2026, 10, 27, 15, 33, 31, tzinfo=timezone.utc).timestamp()))
 
+    def test_infers_monthly_price_from_user_tier(self):
+        self.assertEqual(antigravity_quota.tier_monthly_usd({
+            'id': 'g1-ultra-tier', 'description': 'Google AI Ultra',
+            'upgradeSubscriptionText': 'You are subscribed to the best Google AI plan.'}), 199.99)
+        self.assertEqual(antigravity_quota.tier_monthly_usd({
+            'id': 'g1-ultra-tier', 'description': 'Google AI Ultra',
+            'upgradeSubscriptionUri': 'https://one.google.com/upgrade'}), 99.99)
+        self.assertEqual(antigravity_quota.tier_monthly_usd({
+            'id': 'g1-pro-tier', 'description': 'Google AI Pro'}), 19.99)
+        store.set_kv(self.db, 'antigravity_monthly_usd', 199.99)
+        google_plan = next(p for p in report.summary(self.db, '7d')['plans'] if p['vendor'] == 'google')
+        self.assertEqual(google_plan['monthly_usd'], 199.99)
+
 
 class CodexLimitsTest(Base):
     def test_newer_reading_replaces_session_log_value(self):
