@@ -174,6 +174,14 @@ func textWidth(_ text: String, size: CGFloat, weight: NSFont.Weight = .regular, 
     return ceil((text as NSString).size(withAttributes: [.font: font]).width)
 }
 
+/// The width of an SF Symbol as `Image(systemName:)` draws it in a font of `size` points.
+func symbolWidth(_ name: String, size: CGFloat) -> CGFloat {
+    let configuration = NSImage.SymbolConfiguration(pointSize: size, weight: .regular, scale: .medium)
+    guard let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+        .withSymbolConfiguration(configuration) else { return ceil(size * 1.3) }
+    return ceil(image.size.width)
+}
+
 /// The width PercentLeft takes without icons: "100%", or "100% left".
 func percentWidth(_ text: String = "100%", size: CGFloat, left: Bool) -> CGFloat {
     textWidth(text, size: size, weight: .semibold, digits: true) + (left ? textWidth(" left", size: size * 0.8) : 0)
@@ -297,16 +305,20 @@ struct PlanTitle: View {
     }
 
     private func name(_ text: String, _ palette: Palette) -> some View {
+        // When a measured layout comes out a fraction of a point short, the name shrinks a little
+        // instead of losing its last letters.
         Text(text)
             .font(.system(size: size, weight: .semibold))
             .foregroundStyle(palette.primary)
             .lineLimit(1)
+            .minimumScaleFactor(0.9)
     }
 
     /// The width this title takes, for sizing a table's label column and choosing a title size.
     static func width(_ plan: Plan, full: Bool = false, size: CGFloat, limit: CGFloat = .infinity,
                       warningIcon: Bool = true) -> CGFloat {
-        let icon: CGFloat = warningIcon && plan.warning != nil ? 5 + size * 0.9 : 0
+        let icon = warningIcon && plan.warning != nil
+            ? 5 + symbolWidth("exclamationmark.triangle.fill", size: size * 0.75) : 0
         let extras = size * 0.66 + 5 + icon
         let whole = textWidth(plan.title, size: size, weight: .semibold) + extras
         if full && whole <= limit { return whole }
