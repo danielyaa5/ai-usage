@@ -68,7 +68,7 @@ function level(left) {
 
 async function load() {
   try {
-    const res = await fetch('/api/summary?range=' + encodeURIComponent(state.range), { cache: 'no-store' });
+    const res = await fetch('api/summary?range=' + encodeURIComponent(state.range), { cache: 'no-store' });
     if (!res.ok) throw new Error((await res.json()).error || res.statusText);
     state.data = await res.json();
     $('#error').hidden = true;

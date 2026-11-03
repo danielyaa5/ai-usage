@@ -98,6 +98,9 @@ class Dashboard(Handler):
         if url.path == '/api/summary':
             query = parse_qs(url.query)
             self.send(200, report.summary(self.db, (query.get('range') or ['7d'])[0]))
+        elif url.path == '/api/widget':
+            query = parse_qs(url.query)
+            self.send(200, report.widget(self.db, (query.get('range') or ['7d'])[0]))
         elif url.path == '/api/health':
             self.send(200, {'ok': True, 'last_scan': store.get_kv(self.db, 'last_scan')})
         else:

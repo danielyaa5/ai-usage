@@ -19,6 +19,8 @@ It runs on your Mac, reads the logs these tools already write, and sends nothing
   models, tokens and last request.
 - **Models and effort**: cost per request for each model and reasoning effort, next to the
   providers' list prices.
+- **Mac widgets**: plan limits and period totals on the desktop, from this dashboard on any Mac on
+  your network (see [`macos/`](macos/README.md)).
 
 ![Jobs, models and effort tables in dark mode, with fictional data](docs/dashboard-details-dark.png)
 
@@ -114,6 +116,18 @@ reverses both. Every edited file is first copied to `~/Library/Application Suppo
 
 Reinstalling a wired job's own LaunchAgent usually drops these settings; run `--wire-jobs` again
 afterwards. Both CLIs keep working normally while the dashboard is down.
+
+## Serve it under a path
+
+The page uses relative URLs, so a reverse proxy can show it under a path such as
+`http://my-server.local/ai-usage/`. Forward only GET and HEAD, and repeat the Host and client checks
+in the proxy, since the dashboard then sees the proxy's loopback address.
+
+## JSON for widgets
+
+`/api/widget?range=7d` (or `today`, `30d`, `all`) returns a small, display-ready summary: each plan
+with its limit windows (percent left, level, reset and reading times) and any reader error, and the
+period's totals. The macOS widgets in [`macos/`](macos/README.md) read it.
 
 ## Operate
 

@@ -184,3 +184,65 @@ def summary(db, range_name='7d', now=None):
                     antigravity_quota_error=get_kv(db, 'antigravity_quota_error'),
                     codex_limits_error=get_kv(db, 'codex_limits_error')),
         pricing=dict(checked=table.get('checked'), sources=table.get('sources'), urls=table.get('source_urls', {})))
+
+
+SHORT_NAMES = {'anthropic': 'Claude', 'openai': 'ChatGPT', 'google': 'Antigravity'}
+RANGE_LABELS = {'today': 'Today', '7d': 'Last 7 days', '30d': 'Last 30 days', 'all': 'All recorded'}
+
+
+def short_group(name):
+    """'Gemini Models' -> 'Gemini', 'Claude and GPT models' -> 'Claude and GPT'."""
+    if not name:
+        return None
+    words = name.split()
+    return ' '.join(words[:-1]) if len(words) > 1 and words[-1].lower() == 'models' else name
+
+
+def left_level(left):
+    """The dashboard's thresholds: almost out at 10% left or less, running low at 30% or less."""
+    return 'critical' if left <= 10 else 'warning' if left <= 30 else 'good'
+
+
+def widget(db, range_name='7d', now=None):
+    """A small, display-ready version of the summary for the macOS widgets: each plan with its limit
+    windows and any reader error, and the period's totals. No job names beyond the costliest background job."""
+    data = summary(db, range_name, now)
+    status = data['status']
+    errors = {'anthropic': status.get('probe_error') and f"Probe: {status['probe_error']}",
+              'openai': status.get('codex_limits_error'), 'google': status.get('antigravity_quota_error')}
+    plans = []
+    for plan in data['plans']:
+        vendor = plan['vendor']
+        limits_here = [l for l in data['limits'] if l['vendor'] == vendor]
+        windows = []
+        for l in limits_here:
+            left = max(0.0, min(100.0, 100.0 - (l['used_pct'] or 0)))
+            windows.append(dict(label=l['label'], group=l['group'], group_short=short_group(l['group']),
+                                left_pct=round(left, 1), level=left_level(left),
+                                resets_at=l['resets_at'], observed_at=l['observed_at']))
+        notes = []
+        overage = (limits_here[0]['extra'] or {}).get('overageStatus') if vendor == 'anthropic' and limits_here else None
+        if overage:
+            in_use = ' (in use)' if (limits_here[0]['extra'] or {}).get('isUsingOverage') else ''
+            notes.append(f"Extra usage: {'off' if overage == 'rejected' else overage}{in_use}")
+        if plan['label']:
+            title = plan['label']
+        elif vendor == 'google' and status.get('antigravity_tier'):
+            title = f"{status['antigravity_tier']} (Antigravity)"
+        else:
+            title = plan['plan']
+        plans.append(dict(plan=plan['plan'], title=title, short=SHORT_NAMES.get(vendor, plan['plan']), vendor=vendor,
+                          monthly_usd=plan['monthly_usd'], cost=plan['cost'], prorated_usd=plan['prorated_usd'],
+                          requests=plan['requests'], tokens=plan['tokens'], windows=windows, notes=notes,
+                          warning=errors.get(vendor) or None))
+    totals = data['totals']
+    automated = [j for j in data['jobs'] if j['automated']]
+    top = automated[0] if automated else None
+    return dict(
+        generated_at=data['generated_at'], host=data['host'], range=data['range'],
+        range_label=RANGE_LABELS[data['range']], last_scan=status.get('last_scan'), plans=plans,
+        totals=dict(cost=totals['cost'], requests=totals['requests'], tokens=totals['tokens'], output=totals['output'],
+                    unpriced=totals['unpriced'],
+                    cache_share=round(totals['cache_read'] / totals['tokens'] * 100) if totals['tokens'] else 0,
+                    background_cost=round(sum(j['cost'] for j in automated), 4),
+                    top_background_job=dict(job=top['job'], cost=top['cost']) if top else None))

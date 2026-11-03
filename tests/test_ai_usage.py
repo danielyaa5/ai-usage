@@ -372,6 +372,80 @@ class ReportAndServerTest(Base):
         self.assertEqual(prices['claude-opus-5-5']['efforts'], {'high': {'requests': 1, 'per_request': 1.0}})
         self.assertEqual((prices['gpt-6.1-sol']['price']['cache_read'], prices['gemini-4-argon']['vendor']), (0.1, 'google'))
 
+    def test_widget_payload(self):
+        now = time.time()
+        store.put_events(self.db, [
+            dict(id='a', ts=int(now) - 60, source='claude_transcript', vendor='anthropic', plan='Claude Max 20x',
+                 tool='Claude Code', model='claude-opus-5-5', job='Scheduled: Morning Brief', input=10, cache_read=30,
+                 output=5, cost_usd=1.5),
+            dict(id='b', ts=int(now) - 120, source='codex_rollout', vendor='openai', plan='ChatGPT Pro', tool='Codex',
+                 model='gpt-6-astra', job='Codex (interactive)', input=10, output=5, cost_usd=2.0),
+        ])
+        store.put_limit(self.db, 'anthropic', 'five_hour', 2.0, int(now) + 600, 'Claude Max 20x',
+                        {'status': 'allowed', 'overageStatus': 'rejected'}, int(now))
+        store.put_limit(self.db, 'anthropic', 'seven_day', 75.5, int(now) + 86400, 'Claude Max 20x', {}, int(now))
+        store.put_limit(self.db, 'openai', 'codex_secondary', 95.0, int(now) + 3600, 'pro', {'window_minutes': 10080}, int(now))
+        for order, group in enumerate(('Gemini Models', 'Claude and GPT models')):
+            store.put_limit(self.db, 'google', f'{order}-5h', 120.0 if order else 10.0, int(now) + 60, 'Google AI Ultra',
+                            {'group': group, 'window': '5h', 'order': order}, int(now))
+        store.set_kv(self.db, 'antigravity_tier', 'Google AI Ultra')
+        store.set_kv(self.db, 'probe_error', 'Claude CLI not found')
+        data = report.widget(self.db, '7d', now)
+        self.assertEqual(data['range_label'], 'Last 7 days')
+        plans = {p['vendor']: p for p in data['plans']}
+        self.assertEqual(list(plans), ['anthropic', 'openai', 'google'])
+        claude = plans['anthropic']
+        self.assertEqual([(w['label'], w['left_pct'], w['level']) for w in claude['windows']],
+                         [('5-hour', 98.0, 'good'), ('Weekly', 24.5, 'warning')])
+        self.assertEqual((claude['notes'], claude['warning'], claude['short']),
+                         (['Extra usage: off'], 'Probe: Claude CLI not found', 'Claude'))
+        self.assertEqual((claude['requests'], claude['cost']), (1, 1.5))
+        self.assertEqual([(w['label'], w['left_pct'], w['level']) for w in plans['openai']['windows']],
+                         [('Weekly', 5.0, 'critical')])
+        self.assertIsNone(plans['openai']['warning'])
+        google = plans['google']
+        self.assertEqual(google['title'], 'Google AI Ultra (Antigravity)')
+        self.assertEqual([(w['group_short'], w['left_pct']) for w in google['windows']],
+                         [('Gemini', 90.0), ('Claude and GPT', 0.0)])
+        totals = data['totals']
+        self.assertEqual((totals['requests'], totals['cost'], totals['background_cost']), (2, 3.5, 1.5))
+        self.assertEqual(totals['top_background_job'], {'job': 'Scheduled: Morning Brief', 'cost': 1.5})
+        self.assertEqual(totals['cache_share'], round(30 / 60 * 100))
+        self.assertEqual(report.short_group(None), None)
+        self.assertEqual(report.short_group('Models'), 'Models')
+
+    def test_dashboard_serves_widget_api_and_relative_page(self):
+        import http.client
+        import threading
+        self.db.close()
+        self.db = store.connect(self.dir / 'usage.sqlite')
+        with mock.patch.object(server.Handler, 'db_path', self.dir / 'usage.sqlite'):
+            httpd = server.ThreadingHTTPServer(('127.0.0.1', 0), server.Dashboard)
+            thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+            thread.start()
+            try:
+                def get(path):
+                    conn = http.client.HTTPConnection('127.0.0.1', httpd.server_port, timeout=10)
+                    conn.request('GET', path, headers={'Host': f'127.0.0.1:{httpd.server_port}'})
+                    response = conn.getresponse()
+                    result = response.status, response.read()
+                    conn.close()
+                    return result
+                status, body = get('/api/widget?range=today')
+                self.assertEqual(status, 200)
+                self.assertEqual(json.loads(body)['range'], 'today')
+                status, body = get('/app.js')
+                self.assertEqual(status, 200)
+                # Relative URLs, so the page also works behind a proxy that serves it under a path.
+                self.assertNotIn(b"fetch('/", body)
+                status, body = get('/')
+                self.assertNotIn(b'href="/', body)
+                self.assertNotIn(b'src="/', body)
+            finally:
+                httpd.shutdown()
+                httpd.server_close()
+                thread.join()
+
     def test_access_checks(self):
         self.assertTrue(server.client_allowed('192.168.1.20'))
         self.assertTrue(server.client_allowed('100.101.102.103'))
