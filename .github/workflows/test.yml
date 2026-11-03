@@ -17,3 +17,10 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: python -m unittest discover -s tests -t . -v
+
+  swift:
+    # The widgets' data model, cache and formatting (macos/). Building the app itself needs signing.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift test --package-path macos

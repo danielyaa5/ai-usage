@@ -5,3 +5,10 @@ __pycache__/
 # Machine-specific settings and job rules (see local.example.json and ai_usage/jobs.json)
 local.json
 ai_usage/jobs.local.json
+
+# macOS widgets: generated project, builds and your signing settings (see macos/README.md)
+macos/Local.xcconfig
+macos/AIUsage.xcodeproj/
+macos/build.noindex/
+macos/.build/
+macos/.swiftpm/

@@ -1,0 +1,16 @@
+// Build settings for the app and its widget extension.
+//
+// The app and the widgets share a team-prefixed App Group, so they must be signed by the same Apple
+// developer team. Put your own values in Local.xcconfig next to this file (git ignores it):
+//
+//   DEVELOPMENT_TEAM = ABCDE12345
+//   AI_USAGE_BUNDLE_PREFIX = com.example.you
+//
+// or pass them to xcodebuild. scripts/build.sh reads the same file.
+
+AI_USAGE_BUNDLE_PREFIX = org.example
+DEVELOPMENT_TEAM =
+
+#include? "Local.xcconfig"
+
+AI_USAGE_APP_GROUP = $(DEVELOPMENT_TEAM).$(AI_USAGE_BUNDLE_PREFIX).AIUsage

@@ -17,4 +17,8 @@
   for screenshots.
 - Run `python3 -m unittest discover -s tests -t .` and check the page at desktop and phone widths in
   light and dark mode before finishing a change.
+- The macOS widgets (`macos/`) read only `/api/widget`. Signing team and bundle prefix go in the
+  ignored `macos/Local.xcconfig`; keep them out of tracked files. Run `swift test` in `macos/`, and
+  check a change on a placed widget (light and dark, and with the dashboard unreachable), not only in
+  `--render-previews` images.
 - Keep commits authored by the repository owner without tool attribution.
