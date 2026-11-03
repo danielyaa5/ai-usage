@@ -1,10 +1,15 @@
 import AppIntents
+import AppKit
 import SwiftUI
 import WidgetKit
 import AIUsageKit
 
 // The widget layouts. The app draws the same views for its previews and its menu bar panel, so each
 // takes its size as a parameter instead of reading it from the widget environment.
+//
+// They are planned for macOS's widget content areas (16-point margins): small 138×138, medium 332×138,
+// large 332×350, extra large 717×350. Percentages are never cut short; the labels beside them give way
+// first. Titles don't shrink to fit, so plans side by side read at the same size.
 
 // MARK: - Building blocks
 
@@ -47,33 +52,36 @@ struct PlanSwatch: View {
     }
 }
 
-/// "98%" in the level's color, with a clock when the reading is old or the window has reset since.
+/// "72%", or "72% left", in the level's color, with a clock when the reading is old or the window has
+/// reset since. Always drawn whole: the views beside it give way.
 struct PercentLeft: View {
     var window: LimitWindow
     var now: Date
     var size: CGFloat = 12
-    var suffix = ""
+    var left = false
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         let palette = Palette(scheme: scheme)
         let status = window.status
-        HStack(spacing: 2) {
-            if window.isStale(now: now) || window.resetPassed(now: now) {
-                Image(systemName: "clock.badge.exclamationmark")
+        let old = window.isOld(now: now)
+        HStack(alignment: .firstTextBaseline, spacing: 2) {
+            if old || status != .good {
+                Image(systemName: old ? "clock.badge.exclamationmark" : status.symbol)
                     .font(.system(size: size * 0.75))
-                    .foregroundStyle(palette.stale)
-            } else if status != .good {
-                Image(systemName: status.symbol)
-                    .font(.system(size: size * 0.75))
-                    .foregroundStyle(palette.text(status))
+                    .foregroundStyle(old ? palette.stale : palette.text(status))
             }
-            Text(Format.percent(window.leftPct) + suffix)
+            (Text(Format.percent(window.leftPct))
                 .font(.system(size: size, weight: .semibold))
                 .monospacedDigit()
                 .foregroundStyle(status == .good ? palette.primary : palette.text(status))
+             + Text(left ? " left" : "")
+                .font(.system(size: size * 0.8))
+                .foregroundStyle(palette.muted))
         }
         .lineLimit(1)
+        .fixedSize()
+        .layoutPriority(1)
     }
 }
 
@@ -84,12 +92,28 @@ extension LimitWindow {
         return "\(groupShort) \(label.lowercased())"
     }
 
+    /// The reading is old, or the window has reset since it was taken: the percentage is out of date.
+    func isOld(now: Date) -> Bool {
+        isStale(now: now) || resetPassed(now: now)
+    }
+
     /// What the line under a bar says: when it resets, or that the reading is old.
     func caption(now: Date) -> String {
         if resetPassed(now: now) { return "reset due · as of \(Format.ago(observedAt, now: now))" }
         if isStale(now: now) { return "as of \(Format.ago(observedAt, now: now))" }
         return Format.resets(resetsAt, now: now)
     }
+
+    /// The short form for table cells: "2h 15m" to the reset, "reset due", or nothing.
+    func untilReset(now: Date) -> String {
+        if resetPassed(now: now) { return "reset due" }
+        return Format.remaining(until: resetsAt, now: now) ?? ""
+    }
+}
+
+extension Plan {
+    /// Whether the plan's windows come in model groups, as Antigravity's do.
+    var hasGroups: Bool { windows.contains { $0.groupShort != nil } }
 }
 
 /// A plan's windows for one model group (Antigravity has two); `group` is nil for the other plans.
@@ -112,58 +136,80 @@ func grouped(_ windows: [LimitWindow]) -> [LimitGroup] {
     return out
 }
 
-/// One line and a thin bar: for the narrow columns.
-struct CompactWindowRow: View {
-    var window: LimitWindow
-    var now: Date
-    @Environment(\.colorScheme) private var scheme
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 3) {
-                Text(window.shortLabel)
-                    .font(.system(size: 10))
-                    .foregroundStyle(Palette(scheme: scheme).secondary)
-                Spacer(minLength: 2)
-                PercentLeft(window: window, now: now, size: 11)
-            }
-            MeterBar(left: window.leftPct, level: window.status, height: 4)
-        }
-    }
+/// The width of a line of text in the system font, for sizing a column to its longest label.
+func textWidth(_ text: String, size: CGFloat, weight: NSFont.Weight = .regular) -> CGFloat {
+    ceil((text as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: size, weight: weight)]).width)
 }
 
-/// Label, percent, bar and when it resets.
+/// Label, percent left, bar and when it resets. `inline` puts the time to the reset after the label
+/// instead of under the bar, which saves a line in the medium widget.
 struct WindowRow: View {
     var window: LimitWindow
     var now: Date
-    var showGroup = false
     var percentSize: CGFloat = 13
+    var inline = false
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         let palette = Palette(scheme: scheme)
+        let until = window.untilReset(now: now)
         VStack(alignment: .leading, spacing: 3) {
             HStack(alignment: .firstTextBaseline, spacing: 3) {
-                Text(showGroup ? window.name : window.label)
+                Text(inline && !until.isEmpty ? "\(window.label) · \(until)" : window.label)
                     .font(.system(size: 11))
                     .foregroundStyle(palette.secondary)
                     .lineLimit(1)
                 Spacer(minLength: 2)
-                PercentLeft(window: window, now: now, size: percentSize, suffix: " left")
+                PercentLeft(window: window, now: now, size: percentSize, left: true)
             }
             MeterBar(left: window.leftPct, level: window.status)
-            Text(window.caption(now: now))
-                .font(.system(size: 9.5))
-                .foregroundStyle(window.isStale(now: now) || window.resetPassed(now: now) ? palette.stale : palette.muted)
-                .lineLimit(1)
-                .minimumScaleFactor(0.85)
+            if !inline {
+                Text(window.caption(now: now))
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(window.isOld(now: now) ? palette.stale : palette.muted)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+            }
         }
     }
 }
 
+/// Half a small widget: "5h 98%", a thin bar and the time to the reset.
+struct MiniCell: View {
+    var window: LimitWindow
+    var now: Date
+    var caption = true
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        let palette = Palette(scheme: scheme)
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text(window.shortLabel)
+                    .font(.system(size: 10))
+                    .foregroundStyle(palette.secondary)
+                    .lineLimit(1)
+                Spacer(minLength: 2)
+                PercentLeft(window: window, now: now, size: 11)
+            }
+            MeterBar(left: window.leftPct, level: window.status, height: 4)
+            if caption {
+                Text(window.untilReset(now: now))
+                    .font(.system(size: 9))
+                    .monospacedDigit()
+                    .foregroundStyle(window.resetPassed(now: now) ? palette.stale : palette.muted)
+                    .lineLimit(1)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// The plan's swatch and name. `full` uses the whole title ("Claude Max 20x") when it fits and the
+/// short name ("Antigravity") when it doesn't.
 struct PlanTitle: View {
     var plan: Plan
-    var short = true
+    var full = false
     var size: CGFloat = 12
     @Environment(\.colorScheme) private var scheme
 
@@ -171,11 +217,14 @@ struct PlanTitle: View {
         let palette = Palette(scheme: scheme)
         HStack(spacing: 5) {
             PlanSwatch(vendor: plan.vendor, size: size * 0.66)
-            Text(short ? plan.short : plan.title)
-                .font(.system(size: size, weight: .semibold))
-                .foregroundStyle(palette.primary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
+            if full {
+                ViewThatFits(in: .horizontal) {
+                    name(plan.title, palette)
+                    name(plan.short, palette)
+                }
+            } else {
+                name(plan.short, palette)
+            }
             if plan.warning != nil {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.system(size: size * 0.75))
@@ -184,10 +233,25 @@ struct PlanTitle: View {
             }
         }
     }
+
+    private func name(_ text: String, _ palette: Palette) -> some View {
+        Text(text)
+            .font(.system(size: size, weight: .semibold))
+            .foregroundStyle(palette.primary)
+            .lineLimit(1)
+    }
+
+    /// The width this title takes, for sizing a table's label column.
+    static func width(_ plan: Plan, full: Bool, size: CGFloat, limit: CGFloat) -> CGFloat {
+        let extras = size * 0.66 + 5 + (plan.warning != nil ? 5 + size * 0.9 : 0)
+        let whole = textWidth(plan.title, size: size, weight: .semibold) + extras
+        if full && whole <= limit { return whole }
+        return textWidth(plan.short, size: size, weight: .semibold) + extras
+    }
 }
 
-/// A line at the bottom when the data isn't current. Clicking it reads the dashboard again.
-struct FreshnessFooter: View {
+/// The line a widget shows when its data isn't current. Clicking it reads the dashboard again.
+struct FreshnessNote: View {
     var entry: UsageEntry
     @Environment(\.colorScheme) private var scheme
 
@@ -209,7 +273,27 @@ struct FreshnessFooter: View {
     }
 }
 
-/// No reading yet and none cached.
+/// Reader problems the dashboard reports, such as "Probe: Claude CLI not found".
+struct WarningLines: View {
+    var plans: [Plan]
+    var lines = 2
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        let warnings = plans.compactMap(\.warning)
+        if !warnings.isEmpty {
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                Text(warnings.joined(separator: " · "))
+            }
+            .font(.system(size: 9.5))
+            .foregroundStyle(Palette(scheme: scheme).text(.warning))
+            .lineLimit(lines)
+        }
+    }
+}
+
+/// No reading yet and none kept.
 struct UnavailableView: View {
     var entry: UsageEntry
     @Environment(\.colorScheme) private var scheme
@@ -248,6 +332,208 @@ func hostAndPort(_ url: URL) -> String {
     (url.host ?? url.absoluteString) + (url.port.map { ":\($0)" } ?? "") + (url.path.count > 1 ? url.path : "")
 }
 
+/// Title, the dashboard's host, and the time of the reading, or the freshness note in its place.
+struct WidgetHeader: View {
+    var entry: UsageEntry
+    var title: String
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        let palette = Palette(scheme: scheme)
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(title)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(palette.primary)
+                .lineLimit(1)
+                .layoutPriority(1)
+            if let host = entry.summary?.host {
+                Text(host).font(.system(size: 10)).foregroundStyle(palette.muted).lineLimit(1)
+            }
+            Spacer(minLength: 4)
+            if entry.freshnessNote != nil {
+                FreshnessNote(entry: entry).fixedSize().layoutPriority(2)
+            } else if let at = entry.fetchedAt ?? entry.summary?.generatedAt {
+                Text(at, style: .time).font(.system(size: 10)).foregroundStyle(palette.muted).fixedSize()
+            }
+        }
+    }
+}
+
+// MARK: - The limits table (medium, large and extra large)
+
+/// One line of the limits table: a plan, the heading over a plan's model groups, or one group.
+struct LimitRow: Identifiable {
+    enum Kind { case plan, heading, group }
+    var kind: Kind
+    var plan: Plan
+    var name: String? = nil
+    var windows: [LimitWindow] = []
+    var id: String { "\(plan.id)|\(kind)|\(name ?? "")" }
+}
+
+func limitRows(_ plans: [Plan]) -> [LimitRow] {
+    plans.flatMap { plan -> [LimitRow] in
+        guard plan.hasGroups else { return [LimitRow(kind: .plan, plan: plan, windows: plan.windows)] }
+        return [LimitRow(kind: .heading, plan: plan)]
+            + grouped(plan.windows).map { LimitRow(kind: .group, plan: plan, name: $0.group ?? "Other", windows: $0.windows) }
+    }
+}
+
+/// The window labels across the plans, shortest window first: usually "5-hour" and "Weekly".
+func limitColumns(_ plans: [Plan]) -> [String] {
+    var labels: [String] = []
+    for window in plans.flatMap(\.windows) where !labels.contains(window.label) {
+        labels.append(window.label)
+    }
+    let span = ["5-hour": 0, "Weekly": 1]
+    return labels.enumerated()
+        .sorted { (span[$0.element] ?? 2, $0.offset) < (span[$1.element] ?? 2, $1.offset) }
+        .map { $0.element }
+}
+
+/// The plan limits as a table: a row per plan (for Antigravity, a heading and then a row per model
+/// group) and a column per window, so every plan's 5-hour and weekly limits line up. The medium widget
+/// draws each cell on one line; the large ones add the reset time under a longer bar.
+struct LimitsTable: View {
+    var plans: [Plan]
+    var now: Date
+    var width: CGFloat
+    var roomy = false
+    var fullTitles = false
+    @Environment(\.colorScheme) private var scheme
+
+    private var titleSize: CGFloat { roomy ? 12 : 11 }
+    private var corner: String { roomy ? "" : "% left · resets in" }
+
+    /// Wide enough for the longest label, so no label is cut and the limit columns share the rest.
+    private var labelWidth: CGFloat {
+        let limit = width * (fullTitles ? 0.4 : 0.34)
+        let indent = titleSize * 0.66 + 5
+        let widths = limitRows(plans).map { row -> CGFloat in
+            switch row.kind {
+            case .group: return indent + textWidth(row.name ?? "", size: titleSize - 1)
+            case .plan, .heading: return PlanTitle.width(row.plan, full: fullTitles, size: titleSize, limit: limit)
+            }
+        }
+        return min(limit, (widths + [textWidth(corner, size: 9)]).max() ?? 0) + 2
+    }
+
+    var body: some View {
+        let palette = Palette(scheme: scheme)
+        let columns = limitColumns(plans)
+        let labelWidth = self.labelWidth
+        Grid(alignment: .leading, horizontalSpacing: roomy ? 12 : 8, verticalSpacing: roomy ? 8 : 7) {
+            GridRow {
+                Text(corner)
+                    .font(.system(size: 9))
+                    .foregroundStyle(palette.muted)
+                    .lineLimit(1)
+                    .frame(width: labelWidth, alignment: .leading)
+                ForEach(columns, id: \.self) { column in
+                    Text(column)
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(palette.muted)
+                        .lineLimit(1)
+                }
+            }
+            ForEach(limitRows(plans)) { row in
+                GridRow(alignment: .firstTextBaseline) {
+                    label(row, palette: palette)
+                        .frame(width: labelWidth, alignment: .leading)
+                    cells(row, columns: columns, palette: palette)
+                }
+            }
+        }
+    }
+
+    /// The row's cells, one per column, or a note across them when the plan has no reading.
+    @ViewBuilder
+    private func cells(_ row: LimitRow, columns: [String], palette: Palette) -> some View {
+        if row.kind == .plan && row.windows.isEmpty {
+            Text("No reading yet")
+                .font(.system(size: 10))
+                .foregroundStyle(palette.muted)
+                .gridCellColumns(max(1, columns.count))
+        } else {
+            ForEach(columns, id: \.self) { column in
+                cell(row.windows.first { $0.label == column })
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func cell(_ window: LimitWindow?) -> some View {
+        if let window {
+            if roomy {
+                StackedCell(window: window, now: now)
+            } else {
+                InlineCell(window: window, now: now)
+            }
+        } else {
+            Color.clear.frame(width: 0, height: 0)
+        }
+    }
+
+    @ViewBuilder
+    private func label(_ row: LimitRow, palette: Palette) -> some View {
+        if row.kind == .group {
+            Text(row.name ?? "")
+                .font(.system(size: titleSize - 1))
+                .foregroundStyle(palette.secondary)
+                .lineLimit(1)
+                .padding(.leading, titleSize * 0.66 + 5)
+        } else {
+            PlanTitle(plan: row.plan, full: fullTitles, size: titleSize)
+        }
+    }
+}
+
+/// A medium table cell on one line: percent left, a bar, and the time to the reset.
+struct InlineCell: View {
+    var window: LimitWindow
+    var now: Date
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        let palette = Palette(scheme: scheme)
+        HStack(spacing: 4) {
+            // Wide enough for "100%", so the bars start in line.
+            PercentLeft(window: window, now: now, size: 11)
+                .frame(minWidth: 31, alignment: .trailing)
+            MeterBar(left: window.leftPct, level: window.status, height: 4)
+                .frame(minWidth: 14)
+            Text(window.untilReset(now: now))
+                .font(.system(size: 9.5))
+                .monospacedDigit()
+                .foregroundStyle(window.resetPassed(now: now) ? palette.stale : palette.muted)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .frame(width: 42, alignment: .leading)
+        }
+    }
+}
+
+/// A large table cell: percent left, a bar, then when it resets or how old the reading is.
+struct StackedCell: View {
+    var window: LimitWindow
+    var now: Date
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        let palette = Palette(scheme: scheme)
+        VStack(alignment: .leading, spacing: 3) {
+            PercentLeft(window: window, now: now, size: 12, left: true)
+            MeterBar(left: window.leftPct, level: window.status)
+            Text(window.caption(now: now))
+                .font(.system(size: 9.5))
+                .foregroundStyle(window.isOld(now: now) ? palette.stale : palette.muted)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 // MARK: - Plan limits widget
 
 struct LimitsWidgetView: View {
@@ -284,31 +570,41 @@ struct AllPlansSmall: View {
             ForEach(entry.plans) { plan in
                 if let window = plan.tightest {
                     VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 3) {
+                        HStack(alignment: .firstTextBaseline, spacing: 3) {
                             PlanTitle(plan: plan, size: 12)
                             Spacer(minLength: 2)
-                            PercentLeft(window: window, now: entry.date, size: 12)
+                            PercentLeft(window: window, now: entry.date, size: 12, left: true)
                         }
                         MeterBar(left: window.leftPct, level: window.status)
                         if !note {
-                            Text("\(window.name) · \(Format.remaining(until: window.resetsAt, now: entry.date) ?? "reset due")")
-                                .font(.system(size: 9.5))
-                                .foregroundStyle(palette.muted)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.8)
+                            caption(window, palette: palette)
                         }
                     }
                 } else {
-                    HStack {
+                    HStack(alignment: .firstTextBaseline) {
                         PlanTitle(plan: plan, size: 12)
-                        Spacer()
+                        Spacer(minLength: 2)
                         Text("no reading").font(.system(size: 10)).foregroundStyle(palette.muted)
                     }
                 }
             }
             Spacer(minLength: 0)
-            FreshnessFooter(entry: entry)
+            FreshnessNote(entry: entry)
         }
+    }
+
+    /// "Weekly · resets in 2d 1h", shortened to "Gemini weekly · 2d 10h" when that doesn't fit.
+    private func caption(_ window: LimitWindow, palette: Palette) -> some View {
+        let until = window.untilReset(now: entry.date)
+        let resets = window.resetPassed(now: entry.date) ? until : Format.resets(window.resetsAt, now: entry.date)
+        return ViewThatFits(in: .horizontal) {
+            Text(resets.isEmpty ? window.name : "\(window.name) · \(resets)")
+            Text(until.isEmpty ? window.name : "\(window.name) · \(until)")
+                .minimumScaleFactor(0.85)
+        }
+        .font(.system(size: 9.5))
+        .foregroundStyle(window.isOld(now: entry.date) ? palette.stale : palette.muted)
+        .lineLimit(1)
     }
 }
 
@@ -319,38 +615,51 @@ struct SinglePlanSmall: View {
 
     var body: some View {
         let palette = Palette(scheme: scheme)
+        let note = entry.freshnessNote != nil
         VStack(alignment: .leading, spacing: 6) {
-            PlanTitle(plan: plan, short: false, size: 12)
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                PlanTitle(plan: plan, full: true, size: 12)
+                if plan.hasGroups {
+                    Spacer(minLength: 4)
+                    Text("% left").font(.system(size: 9)).foregroundStyle(palette.muted).fixedSize()
+                }
+            }
             if plan.windows.isEmpty {
                 Text("No limit reading yet.").font(.system(size: 11)).foregroundStyle(palette.muted)
-            } else if plan.windows.count <= 2 {
-                ForEach(plan.windows) { window in
-                    WindowRow(window: window, now: entry.date, percentSize: 15)
-                }
-            } else {
+            } else if plan.hasGroups {
                 ForEach(grouped(plan.windows)) { group in
                     VStack(alignment: .leading, spacing: 3) {
-                        if let name = group.group {
-                            Text(name).font(.system(size: 9, weight: .semibold)).foregroundStyle(palette.muted).lineLimit(1)
+                        Text(group.group ?? "Other")
+                            .font(.system(size: 9.5, weight: .semibold))
+                            .foregroundStyle(palette.muted)
+                            .lineLimit(1)
+                        HStack(alignment: .top, spacing: 10) {
+                            ForEach(group.windows.prefix(2)) { window in
+                                MiniCell(window: window, now: entry.date, caption: !note)
+                            }
                         }
-                        ForEach(group.windows) { CompactWindowRow(window: $0, now: entry.date) }
                     }
+                }
+            } else {
+                ForEach(plan.windows.prefix(2)) { window in
+                    WindowRow(window: window, now: entry.date, percentSize: 15)
                 }
             }
             Spacer(minLength: 0)
-            if let warning = plan.warning, entry.freshnessNote == nil {
+            if let warning = plan.warning, !note {
                 Text(warning)
                     .font(.system(size: 9.5, weight: .medium))
                     .foregroundStyle(palette.text(.warning))
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
             }
-            FreshnessFooter(entry: entry)
+            FreshnessNote(entry: entry)
         }
     }
 }
 
-/// One plan in a medium, large or extra-large widget: its windows two to a row, and its value.
+/// One plan in a medium, large or extra-large widget: its windows two to a row (under each model
+/// group's name for Antigravity), then its API-equivalent value.
 struct SinglePlanWide: View {
     var plan: Plan
     var entry: UsageEntry
@@ -359,26 +668,40 @@ struct SinglePlanWide: View {
 
     var body: some View {
         let palette = Palette(scheme: scheme)
+        let medium = family == .systemMedium
+        let note = entry.freshnessNote != nil
         let columns = [GridItem(.flexible(), spacing: 14, alignment: .top), GridItem(.flexible(), spacing: 14, alignment: .top)]
-        VStack(alignment: .leading, spacing: family == .systemMedium ? 7 : 10) {
+        VStack(alignment: .leading, spacing: medium ? 6 : 10) {
             HStack(alignment: .firstTextBaseline) {
-                PlanTitle(plan: plan, short: false, size: 13)
-                Spacer()
+                PlanTitle(plan: plan, full: true, size: 13)
+                Spacer(minLength: 6)
                 if let monthly = plan.monthlyUsd {
-                    Text(Format.usd(monthly) + "/mo").font(.system(size: 10)).foregroundStyle(palette.muted)
+                    Text(Format.price(monthly) + "/mo").font(.system(size: 10)).foregroundStyle(palette.muted).fixedSize()
                 }
             }
             if plan.windows.isEmpty {
                 Text("No limit reading yet.").font(.system(size: 11)).foregroundStyle(palette.muted)
             } else {
-                LazyVGrid(columns: columns, alignment: .leading, spacing: family == .systemMedium ? 6 : 10) {
-                    ForEach(plan.windows) { window in
-                        WindowRow(window: window, now: entry.date, showGroup: window.groupShort != nil)
+                ForEach(grouped(plan.windows)) { group in
+                    VStack(alignment: .leading, spacing: medium ? 2 : 4) {
+                        if let name = group.group {
+                            Text(name)
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(palette.muted)
+                                .lineLimit(1)
+                        }
+                        LazyVGrid(columns: columns, alignment: .leading, spacing: medium ? 6 : 10) {
+                            ForEach(group.windows) { window in
+                                WindowRow(window: window, now: entry.date, inline: medium && plan.hasGroups)
+                            }
+                        }
                     }
                 }
             }
             Spacer(minLength: 0)
-            if family != .systemMedium || plan.windows.count <= 2 {
+            // The medium size has room for the value only beside ungrouped windows, and drops it
+            // when a warning and the freshness note both need a line.
+            if !medium || (!plan.hasGroups && !(note && plan.warning != nil)) {
                 VStack(alignment: .leading, spacing: 2) {
                     (Text(Format.usd(plan.cost)).fontWeight(.semibold) + Text(" at API prices")
                         + Text(plan.proratedUsd.map { " vs \(Format.usd($0)) of plan price" } ?? ""))
@@ -390,128 +713,93 @@ struct SinglePlanWide: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
             }
-            if let warning = plan.warning {
-                Text(warning).font(.system(size: 9.5, weight: .medium)).foregroundStyle(palette.text(.warning)).lineLimit(1)
+            if let warning = plan.warning, !(medium && note) {
+                Text(warning)
+                    .font(.system(size: 9.5, weight: .medium))
+                    .foregroundStyle(palette.text(.warning))
+                    .lineLimit(1)
             }
-            FreshnessFooter(entry: entry)
+            FreshnessNote(entry: entry)
         }
     }
 }
 
-/// The three plans side by side, one line per window.
+/// The plans as a table, a line per limit.
 struct AllPlansMedium: View {
     var entry: UsageEntry
-    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        let palette = Palette(scheme: scheme)
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .top, spacing: 12) {
-                ForEach(entry.plans) { plan in
-                    VStack(alignment: .leading, spacing: 5) {
-                        PlanTitle(plan: plan, size: 11)
-                        if plan.windows.isEmpty {
-                            Text("No reading").font(.system(size: 10)).foregroundStyle(palette.muted)
-                        }
-                        ForEach(grouped(plan.windows)) { group in
-                            VStack(alignment: .leading, spacing: 4) {
-                                if let name = group.group {
-                                    Text(name).font(.system(size: 9, weight: .semibold)).foregroundStyle(palette.muted).lineLimit(1)
-                                }
-                                ForEach(group.windows) { CompactWindowRow(window: $0, now: entry.date) }
-                            }
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                }
-            }
-            Spacer(minLength: 0)
-            FreshnessFooter(entry: entry)
+        VStack(alignment: .leading, spacing: 0) {
+            LimitsTable(plans: entry.plans, now: entry.date, width: PreviewSize.content(.systemMedium).width)
+            Spacer(minLength: 6)
+            FreshnessNote(entry: entry)
         }
     }
 }
 
-/// Large and extra large: the plans with reset times, then the period's totals.
+/// Large and extra large: the table with reset times, reader problems, then the period's totals.
 struct AllPlansLarge: View {
     var entry: UsageEntry
     var family: WidgetFamily
-    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        let palette = Palette(scheme: scheme)
-        VStack(alignment: .leading, spacing: 10) {
-            WidgetHeader(entry: entry, title: "AI plan limits")
-            HStack(alignment: .top, spacing: 14) {
-                ForEach(entry.plans) { plan in
-                    VStack(alignment: .leading, spacing: 7) {
-                        PlanTitle(plan: plan, short: family != .systemExtraLarge, size: 12)
-                        if plan.windows.isEmpty {
-                            Text("No limit reading yet.").font(.system(size: 10)).foregroundStyle(palette.muted)
-                        }
-                        ForEach(grouped(plan.windows)) { group in
-                            VStack(alignment: .leading, spacing: 6) {
-                                if let name = group.group {
-                                    Text(name).font(.system(size: 9.5, weight: .semibold)).foregroundStyle(palette.muted).lineLimit(1)
-                                }
-                                ForEach(group.windows) { WindowRow(window: $0, now: entry.date, percentSize: 12) }
-                            }
-                        }
-                        if let warning = plan.warning {
-                            Text(warning).font(.system(size: 9.5)).foregroundStyle(palette.text(.warning)).lineLimit(2)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                }
+        let wide = family == .systemExtraLarge
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 9) {
+                WidgetHeader(entry: entry, title: "AI plan limits")
+                LimitsTable(plans: entry.plans, now: entry.date, width: PreviewSize.content(family).width,
+                            roomy: true, fullTitles: wide)
+                WarningLines(plans: entry.plans, lines: wide ? 1 : 2)
             }
-            Spacer(minLength: 0)
+            Spacer(minLength: 8)
             if let summary = entry.summary {
-                Divider().overlay(palette.divider)
-                TotalsRow(summary: summary, compact: family != .systemExtraLarge)
-            }
-            FreshnessFooter(entry: entry)
-        }
-    }
-}
-
-struct WidgetHeader: View {
-    var entry: UsageEntry
-    var title: String
-    @Environment(\.colorScheme) private var scheme
-
-    var body: some View {
-        let palette = Palette(scheme: scheme)
-        HStack(alignment: .firstTextBaseline) {
-            Text(title).font(.system(size: 13, weight: .bold)).foregroundStyle(palette.primary)
-            if let host = entry.summary?.host {
-                Text(host).font(.system(size: 10)).foregroundStyle(palette.muted).lineLimit(1)
-            }
-            Spacer()
-            if entry.freshnessNote == nil, let at = entry.fetchedAt ?? entry.summary?.generatedAt {
-                Text(at, style: .time).font(.system(size: 10)).foregroundStyle(palette.muted)
+                TotalsSection(summary: summary, compact: !wide)
             }
         }
     }
 }
 
-// MARK: - Usage widget
+// MARK: - Usage totals
 
 struct Stat: Identifiable {
     var label: String
+    /// The label in narrow places: "Requests" for "Model requests".
+    var short: String
     var value: String
     var hint: String
     var id: String { label }
 }
 
+/// The dashboard's four totals. The hints leave out the period, which every widget shows elsewhere.
 func stats(_ summary: UsageSummary) -> [Stat] {
     let t = summary.totals
     return [
-        Stat(label: "API-equivalent value", value: Format.usd(t.cost),
-             hint: (t.unpriced > 0 ? "\(Format.grouped(t.unpriced)) unpriced · " : "") + summary.rangeLabel.lowercased()),
-        Stat(label: "Model requests", value: Format.grouped(t.requests), hint: "\(Format.tokens(t.output)) output tokens"),
-        Stat(label: "Tokens processed", value: Format.tokens(t.tokens), hint: "\(t.cacheShare)% from cache"),
-        Stat(label: "Background jobs", value: Format.usd(t.backgroundCost),
-             hint: t.topBackgroundJob.map { "top: \($0.job) (\(Format.usd($0.cost)))" } ?? "none in this range"),
+        Stat(label: "API-equivalent value", short: "API value", value: Format.usd(t.cost),
+             hint: t.unpriced > 0 ? "\(Format.grouped(t.unpriced)) requests unpriced" : "at API prices"),
+        Stat(label: "Model requests", short: "Requests", value: Format.grouped(t.requests),
+             hint: "\(Format.tokens(t.output)) output tokens"),
+        Stat(label: "Tokens processed", short: "Tokens", value: Format.tokens(t.tokens), hint: "\(t.cacheShare)% from cache"),
+        Stat(label: "Background jobs", short: "Background jobs", value: Format.usd(t.backgroundCost),
+             hint: t.topBackgroundJob.map { "top: \($0.job) (\(Format.usd($0.cost)))" } ?? "none in this period"),
     ]
+}
+
+/// The totals under the large limits widget, with the period they cover.
+struct TotalsSection: View {
+    var summary: UsageSummary
+    var compact: Bool
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        let palette = Palette(scheme: scheme)
+        VStack(alignment: .leading, spacing: 4) {
+            Divider().overlay(palette.divider)
+            Text(summary.rangeLabel)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(palette.muted)
+            TotalsRow(summary: summary, compact: compact)
+        }
+    }
 }
 
 struct TotalsRow: View {
@@ -524,7 +812,7 @@ struct TotalsRow: View {
         HStack(alignment: .top, spacing: 10) {
             ForEach(stats(summary)) { stat in
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(compact ? shortLabel(stat.label) : stat.label)
+                    Text(compact ? stat.short : stat.label)
                         .font(.system(size: 9)).foregroundStyle(palette.muted).lineLimit(1)
                     Text(stat.value)
                         .font(.system(size: compact ? 14 : 17, weight: .bold)).monospacedDigit()
@@ -536,11 +824,6 @@ struct TotalsRow: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-    }
-
-    private func shortLabel(_ label: String) -> String {
-        ["API-equivalent value": "API value", "Model requests": "Requests", "Tokens processed": "Tokens",
-         "Background jobs": "Background"][label] ?? label
     }
 }
 
@@ -562,16 +845,15 @@ struct UsageWidgetView: View {
                     Text(summary.rangeLabel).font(.system(size: 10)).foregroundStyle(palette.muted)
                     Spacer(minLength: 4)
                     ForEach(all.dropFirst()) { stat in
-                        HStack {
-                            Text(stat.label.replacingOccurrences(of: " processed", with: "").replacingOccurrences(of: "Model ", with: ""))
-                                .foregroundStyle(palette.secondary)
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(stat.short).foregroundStyle(palette.secondary).lineLimit(1)
                             Spacer(minLength: 4)
                             Text(stat.value).fontWeight(.semibold).monospacedDigit().foregroundStyle(palette.primary)
+                                .fixedSize()
                         }
                         .font(.system(size: 11))
-                        .lineLimit(1)
                     }
-                    FreshnessFooter(entry: entry)
+                    FreshnessNote(entry: entry)
                 }
             } else {
                 VStack(alignment: .leading, spacing: 8) {
@@ -590,7 +872,6 @@ struct UsageWidgetView: View {
                         }
                     }
                     Spacer(minLength: 0)
-                    FreshnessFooter(entry: entry)
                 }
             }
         } else {
@@ -610,6 +891,12 @@ enum PreviewSize {
         case .systemExtraLarge: return CGSize(width: 749, height: 382)
         default: return CGSize(width: 170, height: 170)
         }
+    }
+
+    /// The area inside the widget's 16-point margins.
+    static func content(_ family: WidgetFamily) -> CGSize {
+        let size = points(family)
+        return CGSize(width: size.width - 32, height: size.height - 32)
     }
 }
 

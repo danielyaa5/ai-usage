@@ -10,6 +10,13 @@ public enum Format {
         return "$" + grouped(Int(value.rounded()))
     }
 
+    /// A plan price as the dashboard writes it: "$200", "$199.99".
+    public static func price(_ value: Double) -> String {
+        let cents = Int((value * 100).rounded())
+        if cents % 100 == 0 { return "$" + grouped(cents / 100) }
+        return "$" + String(format: "%.2f", value)
+    }
+
     public static func tokens(_ value: Int) -> String {
         let v = Double(value)
         if value == 0 { return "0" }

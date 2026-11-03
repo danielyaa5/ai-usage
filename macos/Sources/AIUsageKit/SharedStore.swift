@@ -4,8 +4,9 @@ import Security
 #endif
 
 /// Settings and the last good reading, shared by the app and the widget extension through the App
-/// Group container: `config.json` (the dashboard address) and `summary-<range>.json` (cached replies,
-/// shown when the dashboard can't be reached).
+/// Group container: `config.json` (the dashboard address), `summary-<range>.json` (cached replies,
+/// shown when the dashboard can't be reached), `failure-<range>.json` (the app's last failed read,
+/// cleared when a read succeeds) and `refresh.json` (when a widget's refresh button was last clicked).
 ///
 /// On macOS the group is the team-prefixed kind ("TEAMID.com.example.AIUsage"), which needs no
 /// provisioning profile entry; a `group.` container would need one, and since macOS 15 access to it is
@@ -25,6 +26,16 @@ public enum SharedStore {
     public struct Cached: Codable, Sendable {
         public var summary: UsageSummary
         public var fetchedAt: Date
+    }
+
+    /// A read of the dashboard that failed.
+    public struct Failure: Codable, Equatable, Sendable {
+        public var at: Date
+        public var error: String
+    }
+
+    private struct Request: Codable {
+        var at: Date
     }
 
     /// Tests point this at a temporary folder.
@@ -72,7 +83,7 @@ public enum SharedStore {
 
     public static func clearCache() {
         guard let folder, let names = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else { return }
-        for name in names where name.hasPrefix("summary-") && name.hasSuffix(".json") {
+        for name in names where (name.hasPrefix("summary-") || name.hasPrefix("failure-")) && name.hasSuffix(".json") {
             try? FileManager.default.removeItem(at: folder.appendingPathComponent(name))
         }
     }
@@ -91,6 +102,43 @@ public enum SharedStore {
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let data = try? cacheEncoder.encode(Cached(summary: summary, fetchedAt: date))
         try? data?.write(to: folder.appendingPathComponent("summary-\(safe(range)).json"), options: .atomic)
+    }
+
+    /// The app's last failed read of a period, if no read has succeeded since.
+    public static func failure(range: String) -> Failure? {
+        read(Failure.self, "failure-\(safe(range)).json")
+    }
+
+    /// The app records its failed reads, so the widgets can say "Offline" as soon as the app can't
+    /// reach the dashboard either, instead of waiting until their own fallback reading gets old.
+    public static func recordFailure(_ error: String, range: String, at date: Date = Date()) {
+        write(Failure(at: date, error: error), "failure-\(safe(range)).json")
+    }
+
+    public static func clearFailure(range: String) {
+        guard let url = folder?.appendingPathComponent("failure-\(safe(range)).json") else { return }
+        try? FileManager.default.removeItem(at: url)
+    }
+
+    /// A widget's refresh button asks for a new reading: until one arrives, the widgets read the
+    /// dashboard themselves instead of reusing the shared reading.
+    public static func requestRefresh(at date: Date = Date()) {
+        write(Request(at: date), "refresh.json")
+    }
+
+    public static var refreshRequested: Date? {
+        read(Request.self, "refresh.json")?.at
+    }
+
+    private static func read<T: Decodable>(_ type: T.Type, _ name: String) -> T? {
+        guard let url = folder?.appendingPathComponent(name), let data = try? Data(contentsOf: url) else { return nil }
+        return try? cacheDecoder.decode(type, from: data)
+    }
+
+    private static func write<T: Encodable>(_ value: T, _ name: String) {
+        guard let folder else { return }
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try? cacheEncoder.encode(value).write(to: folder.appendingPathComponent(name), options: .atomic)
     }
 
     private static func safe(_ range: String) -> String {
@@ -121,22 +169,34 @@ public struct Reading: Sendable {
     /// minutes, so the widgets rarely need to ask the dashboard themselves). When the fetch fails, a kept
     /// reading younger than `tolerate` is shown without an error: the app evidently still reaches the
     /// dashboard even if this process can't (a widget can lack the app's local network access).
+    ///
+    /// Neither applies once the app has recorded a failure since the kept reading, or a refresh was
+    /// asked for since. The app passes `record`, so its failures and successes are recorded.
     public static func load(range: String, reuse: TimeInterval = 0, tolerate: TimeInterval = 0,
-                            timeout: TimeInterval = 15, now: Date = Date()) async -> Reading {
+                            timeout: TimeInterval = 15, record: Bool = false, now: Date = Date()) async -> Reading {
         let server = SharedStore.server
-        if reuse > 0, let kept = SharedStore.cached(range: range), now.timeIntervalSince(kept.fetchedAt) < reuse,
-           kept.fetchedAt <= now {
+        let kept = SharedStore.cached(range: range)
+        let since = { (date: Date?) -> Bool in
+            guard let date else { return false }
+            return kept.map { date > $0.fetchedAt } ?? true
+        }
+        let appFailed = since(SharedStore.failure(range: range)?.at)
+        if reuse > 0, let kept, !appFailed, !since(SharedStore.refreshRequested),
+           kept.fetchedAt <= now, now.timeIntervalSince(kept.fetchedAt) < reuse {
             return Reading(summary: kept.summary, fetchedAt: kept.fetchedAt, error: nil, server: server)
         }
         do {
             let summary = try await UsageClient.fetch(server: server, range: range, timeout: timeout)
             SharedStore.cache(summary, range: range, at: now)
+            if record { SharedStore.clearFailure(range: range) }
             return Reading(summary: summary, fetchedAt: now, error: nil, server: server)
         } catch {
-            let cached = SharedStore.cached(range: range)
-            let recent = cached.map { now.timeIntervalSince($0.fetchedAt) < tolerate } ?? false
-            return Reading(summary: cached?.summary, fetchedAt: cached?.fetchedAt,
-                           error: recent ? nil : error.localizedDescription, server: server)
+            let message = error.localizedDescription
+            if record { SharedStore.recordFailure(message, range: range, at: now) }
+            let fallback = SharedStore.cached(range: range)
+            let recent = !appFailed && (fallback.map { now.timeIntervalSince($0.fetchedAt) < tolerate } ?? false)
+            return Reading(summary: fallback?.summary, fetchedAt: fallback?.fetchedAt,
+                           error: recent ? nil : message, server: server)
         }
     }
 }

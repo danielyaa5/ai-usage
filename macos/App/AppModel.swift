@@ -55,7 +55,7 @@ final class AppModel: ObservableObject {
         var results: [String: Reading] = [:]
         await withTaskGroup(of: (String, Reading).self) { group in
             for range in UsageRanges.all {
-                group.addTask { (range, await Reading.load(range: range, now: now)) }
+                group.addTask { (range, await Reading.load(range: range, record: true, now: now)) }
             }
             for await (range, reading) in group {
                 results[range] = reading

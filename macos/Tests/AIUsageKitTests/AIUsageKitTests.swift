@@ -209,8 +209,10 @@ final class SummaryTests: XCTestCase {
         SharedStore.cache(newer, range: "7d")
         XCTAssertEqual(SharedStore.cached(range: "7d")?.summary.host, "newest")
 
+        SharedStore.recordFailure("timed out", range: "7d")
         try SharedStore.save(.init(server: UsageClient.normalize("other-mac.local:8796")))
         XCTAssertNil(SharedStore.cached(range: "7d"))
+        XCTAssertNil(SharedStore.failure(range: "7d"), "the old address's failures go too")
     }
 
     func testRecentCacheIsReusedWithoutAsking() async throws {
@@ -241,6 +243,58 @@ final class SummaryTests: XCTestCase {
                                         now: fetchedAt.addingTimeInterval(600))
         XCTAssertEqual(shared.summary, summary)
         XCTAssertNil(shared.error)
+    }
+
+    func testAppFailureMakesTheWidgetsSayOffline() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        SharedStore.folderOverride = folder
+        defer {
+            SharedStore.folderOverride = nil
+            try? FileManager.default.removeItem(at: folder)
+        }
+        try SharedStore.save(.init(server: URL(string: "http://127.0.0.1:9/")!))
+        let summary = try UsageSummary.decoder.decode(UsageSummary.self, from: Data(fixture.utf8))
+        let fetchedAt = Date(timeIntervalSince1970: 1793700100)
+        SharedStore.cache(summary, range: "7d", at: fetchedAt)
+
+        // The app's own read fails, and it records that.
+        let app = await Reading.load(range: "7d", timeout: 3, record: true, now: fetchedAt.addingTimeInterval(300))
+        XCTAssertNotNil(app.error)
+        XCTAssertEqual(SharedStore.failure(range: "7d")?.at, fetchedAt.addingTimeInterval(300))
+
+        // A widget then neither reuses nor excuses the kept reading: it says at once that it's old.
+        let widget = await Reading.load(range: "7d", reuse: 360, tolerate: 900, timeout: 3,
+                                        now: fetchedAt.addingTimeInterval(330))
+        XCTAssertEqual(widget.summary, summary)
+        XCTAssertEqual(widget.fetchedAt, fetchedAt)
+        XCTAssertNotNil(widget.error)
+
+        // A reading taken after the failure counts as current again.
+        SharedStore.cache(summary, range: "7d", at: fetchedAt.addingTimeInterval(400))
+        let later = await Reading.load(range: "7d", reuse: 360, now: fetchedAt.addingTimeInterval(450))
+        XCTAssertNil(later.error)
+        SharedStore.clearFailure(range: "7d")
+        XCTAssertNil(SharedStore.failure(range: "7d"))
+    }
+
+    func testRefreshRequestSkipsTheSharedReading() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        SharedStore.folderOverride = folder
+        defer {
+            SharedStore.folderOverride = nil
+            try? FileManager.default.removeItem(at: folder)
+        }
+        try SharedStore.save(.init(server: URL(string: "http://127.0.0.1:9/")!))
+        let summary = try UsageSummary.decoder.decode(UsageSummary.self, from: Data(fixture.utf8))
+        let fetchedAt = Date(timeIntervalSince1970: 1793700100)
+        SharedStore.cache(summary, range: "7d", at: fetchedAt)
+        SharedStore.requestRefresh(at: fetchedAt.addingTimeInterval(30))
+        XCTAssertEqual(SharedStore.refreshRequested, fetchedAt.addingTimeInterval(30))
+
+        // Without the request this reading would be reused (see above); with it, the dashboard is asked.
+        let asked = await Reading.load(range: "7d", reuse: 360, timeout: 3, now: fetchedAt.addingTimeInterval(60))
+        XCTAssertEqual(asked.fetchedAt, fetchedAt)
+        XCTAssertNotNil(asked.error, "it tried the dashboard, which isn't there")
     }
 
     func testSampleIsComplete() {
@@ -290,6 +344,9 @@ final class FormatTests: XCTestCase {
         XCTAssertEqual(Format.usd(0.004), "<$0.01")
         XCTAssertEqual(Format.usd(41.7), "$41.70")
         XCTAssertEqual(Format.usd(1073.4), "$1,073")
+        XCTAssertEqual(Format.price(200), "$200")
+        XCTAssertEqual(Format.price(199.99), "$199.99")
+        XCTAssertEqual(Format.price(99.5), "$99.50")
         XCTAssertEqual(Format.tokens(0), "0")
         XCTAssertEqual(Format.tokens(950), "950")
         XCTAssertEqual(Format.tokens(9_100_000), "9.1M")

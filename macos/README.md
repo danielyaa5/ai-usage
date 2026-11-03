@@ -5,7 +5,8 @@ keeps them current.
 
 - **AI plan limits** (small, medium, large, extra large): what's left of each plan's 5-hour and
   weekly limits, when each resets, and any reader problem the dashboard reports (such as
-  "Probe: Claude CLI not found"). Edit the widget to show one plan in more detail.
+  "Probe: Claude CLI not found"). From the medium size up, the plans line up in a table with a column
+  per limit. Edit the widget to show one plan in more detail.
 - **AI usage totals** (small, medium): API-equivalent value, model requests, tokens processed and
   background jobs, for today, the last 7 days or the last 30 days.
 
@@ -21,7 +22,9 @@ main README). The menu bar app reads it every 5 minutes, backing off to 30 minut
 and keeps the reply in an App Group container it shares with the widget extension. It asks macOS to
 redraw the widgets when something they show changes. Each widget timeline uses the shared reply when
 it is under 6 minutes old and otherwise reads the dashboard itself, so the widgets still work when the
-app isn't running. Nothing else is stored, and no credentials are involved.
+app isn't running. When the app's read fails it notes that in the container as well, so the widgets
+say "Offline" as soon as the app can't reach the dashboard either, and clicking that line makes them
+read the dashboard themselves. Nothing else is stored, and no credentials are involved.
 
 The app opens at login (turn that off in its settings) and can hide its menu bar icon.
 
@@ -83,7 +86,8 @@ cd macos && swift test
 ```
 
 The tests cover the reply format, the shared cache (a newer reading is never replaced by an older
-one, and a cached reading keeps its original time), addresses and formatting. They don't show that a
+one, a cached reading keeps its original time, and the app's failures and refresh requests stop the
+widgets reusing it), addresses and formatting. They don't show that a
 placed widget draws; check that on the desktop after installing.
 
 ## Troubleshooting

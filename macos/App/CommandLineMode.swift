@@ -39,7 +39,7 @@ enum CommandLineMode {
         if arguments.contains("--refresh-once") {
             var failed = false
             for range in UsageRanges.all {
-                let reading = await Reading.load(range: range)
+                let reading = await Reading.load(range: range, record: true)
                 if let summary = reading.summary, reading.error == nil {
                     let windows = summary.plans.map { "\($0.short) \($0.windows.count)" }.joined(separator: ", ")
                     print("\(range): \(summary.host), generated \(summary.generatedAt), windows: \(windows)")
@@ -124,14 +124,72 @@ enum PreviewRenderer {
                 try save("totals-\(range)-\(size)", family, UsageWidgetView(entry: entries[range]!, family: family))
             }
         }
-        // The two problem states.
+        // The states that need room: offline (with its note), and with --sample, old readings and
+        // reader problems.
         var offline = limits
         offline.error = "Can't reach AI Usage at my-mac.local:8796: timed out"
         offline.fetchedAt = now.addingTimeInterval(-2 * 3600)
-        try save("limits-all-medium-offline", .systemMedium, LimitsWidgetView(entry: offline, family: .systemMedium))
+        for (size, family) in sizes {
+            try save("limits-all-\(size)-offline", family, LimitsWidgetView(entry: offline, family: family))
+        }
+        var googleOffline = offline
+        googleOffline.vendor = "google"
+        for (size, family) in sizes.prefix(3) {
+            try save("limits-google-\(size)-offline", family, LimitsWidgetView(entry: googleOffline, family: family))
+        }
+        var totalsOffline = entries[UsageRanges.limits]!
+        totalsOffline.error = offline.error
+        totalsOffline.fetchedAt = offline.fetchedAt
+        for (size, family) in sizes.prefix(2) {
+            try save("totals-7d-\(size)-offline", family, UsageWidgetView(entry: totalsOffline, family: family))
+        }
+        if sample, var summary = limits.summary {
+            summary.plans = summary.plans.map { troubled($0, now: now) }
+            var problems = limits
+            problems.summary = summary
+            for (size, family) in sizes {
+                try save("limits-all-\(size)-problems", family, LimitsWidgetView(entry: problems, family: family))
+            }
+            for vendor in ["anthropic", "google"] {
+                var entry = problems
+                entry.vendor = vendor
+                for (size, family) in sizes.prefix(3) {
+                    try save("limits-\(vendor)-\(size)-problems", family, LimitsWidgetView(entry: entry, family: family))
+                }
+            }
+        }
         let empty = UsageEntry(date: now, summary: nil, fetchedAt: nil, error: "timed out",
                                server: UsageClient.normalize("my-mac.local:8796")!, vendor: nil)
         try save("limits-all-small-unavailable", .systemSmall, LimitsWidgetView(entry: empty, family: .systemSmall))
         return count
+    }
+
+    /// The sample with what real readings run into: a Claude reading three days old and past its
+    /// reset, reader errors, ChatGPT nearly out, and Antigravity readings seven hours old.
+    static func troubled(_ plan: Plan, now: Date) -> Plan {
+        var plan = plan
+        switch plan.vendor {
+        case "anthropic":
+            plan.warning = "Probe: Claude CLI not found"
+            if !plan.windows.isEmpty {
+                plan.windows[0].observedAt = now.addingTimeInterval(-3 * 86400)
+                plan.windows[0].resetsAt = now.addingTimeInterval(-3 * 86400 + 2 * 3600)
+            }
+        case "openai":
+            plan.windows = [
+                LimitWindow(label: "5-hour", leftPct: 24, resetsAt: now.addingTimeInterval(3 * 3600),
+                            observedAt: now.addingTimeInterval(-120)),
+                LimitWindow(label: "Weekly", leftPct: 8, resetsAt: now.addingTimeInterval(15 * 3600 + 58 * 60),
+                            observedAt: now.addingTimeInterval(-120)),
+            ]
+        case "google":
+            plan.warning = "Antigravity quota: no language server found"
+            for index in plan.windows.indices {
+                plan.windows[index].observedAt = now.addingTimeInterval(-7 * 3600)
+            }
+        default:
+            break
+        }
+        return plan
     }
 }

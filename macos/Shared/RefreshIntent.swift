@@ -21,12 +21,18 @@ struct RefreshUsageIntent: AppIntent {
     static let isDiscoverable = false
 
     func perform() async throws -> some IntentResult {
-        // macOS doesn't redraw a widget while its button's intent runs, so keep this short.
-        async let today = Reading.load(range: "today", timeout: 8)
-        async let week = Reading.load(range: "7d", timeout: 8)
-        async let month = Reading.load(range: "30d", timeout: 8)
-        _ = await (today, week, month)
-        WidgetCenter.shared.reloadAllTimelines()
+        // macOS doesn't redraw a widget while its button's intent runs, so this returns at once. The
+        // request makes the timelines macOS reloads next read the dashboard rather than reuse the
+        // shared reading; the reads below redraw every widget again when they finish.
+        SharedStore.requestRefresh()
+        Task.detached {
+            await withTaskGroup(of: Void.self) { group in
+                for range in UsageRanges.all {
+                    group.addTask { _ = await Reading.load(range: range, timeout: 8) }
+                }
+            }
+            WidgetCenter.shared.reloadAllTimelines()
+        }
         return .result()
     }
 }
