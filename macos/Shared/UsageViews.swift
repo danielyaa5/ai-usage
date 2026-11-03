@@ -305,13 +305,11 @@ struct PlanTitle: View {
     }
 
     private func name(_ text: String, _ palette: Palette) -> some View {
-        // When a measured layout comes out a fraction of a point short, the name shrinks a little
-        // instead of losing its last letters.
+        // No scale factor: beside a spacer, SwiftUI would shrink the name even with room to spare.
         Text(text)
             .font(.system(size: size, weight: .semibold))
             .foregroundStyle(palette.primary)
             .lineLimit(1)
-            .minimumScaleFactor(0.9)
     }
 
     /// The width this title takes, for sizing a table's label column and choosing a title size.
