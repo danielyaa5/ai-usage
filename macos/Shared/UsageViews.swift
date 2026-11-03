@@ -793,16 +793,21 @@ struct AllPlansSmall: View {
         }
     }
 
-    /// 12-point titles beside "100% left" unless one of them doesn't fit; then all a size smaller, then
-    /// the percents without " left" (a problem's triangle beside "Antigravity" needs that), then 10 points.
+    /// 12-point titles beside their percents with " left" unless one of them doesn't fit; then all a
+    /// size smaller, then the percents without " left" (a problem's triangle beside "Antigravity" can
+    /// need that), then 10 points. Each row is measured with the percent it shows, not "100%", so
+    /// " left" stays whenever it fits.
     private func titleFit(warningIcon: Bool) -> (size: CGFloat, left: Bool) {
         let steps: [(CGFloat, Bool)] = [(12, true), (11, true), (12, false), (11, false)]
         for (size, left) in steps {
-            // The row's spacing: 3 on each side of a spacer of at least 2.
-            let percent = percentWidth(size: 12, left: left) + 8
-            if entry.plans.allSatisfy({ PlanTitle.width($0, size: size, warningIcon: warningIcon) + percent <= width }) {
-                return (size, left)
+            let fits = entry.plans.allSatisfy { plan in
+                let beside = plan.firstToRunOut(now: entry.date).map {
+                    percentWidth(Format.percent($0.leftPct), size: 12, left: left)
+                } ?? textWidth("no reading", size: 10)
+                // The row's spacing: 3 on each side of a spacer of at least 2.
+                return PlanTitle.width(plan, size: size, warningIcon: warningIcon) + beside + 8 <= width
             }
+            if fits { return (size, left) }
         }
         return (10, false)
     }
