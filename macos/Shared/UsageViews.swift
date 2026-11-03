@@ -503,6 +503,10 @@ struct LimitsTable: View {
     var width: CGFloat
     var roomy = false
     var fullTitles = false
+    /// Space between rows; nil for the usual.
+    var rowSpacing: CGFloat? = nil
+    /// The row of column names ("5-hour", "Weekly"); a tight layout can do without it.
+    var heading = true
     @Environment(\.colorScheme) private var scheme
 
     private var titleSize: CGFloat { roomy ? 12 : 11 }
@@ -518,7 +522,7 @@ struct LimitsTable: View {
             case .plan, .heading: return PlanTitle.width(row.plan, full: fullTitles, size: titleSize, limit: limit)
             }
         }
-        return min(limit, (widths + [textWidth(corner, size: 9)]).max() ?? 0) + 2
+        return min(limit, (widths + [heading ? textWidth(corner, size: 9) : 0]).max() ?? 0) + 2
     }
 
     var body: some View {
@@ -526,18 +530,20 @@ struct LimitsTable: View {
         let columns = limitColumns(plans)
         let labelWidth = self.labelWidth
         let untilWidth = untilSlot(plans.flatMap(\.windows), now: now)
-        Grid(alignment: .leading, horizontalSpacing: roomy ? 12 : 8, verticalSpacing: roomy ? 8 : 7) {
-            GridRow {
-                Text(corner)
-                    .font(.system(size: 9))
-                    .foregroundStyle(palette.muted)
-                    .lineLimit(1)
-                    .frame(width: labelWidth, alignment: .leading)
-                ForEach(columns, id: \.self) { column in
-                    Text(column)
-                        .font(.system(size: 9, weight: .semibold))
+        Grid(alignment: .leading, horizontalSpacing: roomy ? 12 : 8, verticalSpacing: rowSpacing ?? (roomy ? 8 : 7)) {
+            if heading {
+                GridRow {
+                    Text(corner)
+                        .font(.system(size: 9))
                         .foregroundStyle(palette.muted)
                         .lineLimit(1)
+                        .frame(width: labelWidth, alignment: .leading)
+                    ForEach(columns, id: \.self) { column in
+                        Text(column)
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(palette.muted)
+                            .lineLimit(1)
+                    }
                 }
             }
             ForEach(limitRows(plans)) { row in
@@ -976,11 +982,24 @@ struct AllPlansMedium: View {
     @Environment(\.widgetContentSize) private var measured
 
     var body: some View {
+        // Five rows (Antigravity's model groups) and the line under them only just fit a Mac's medium
+        // widget: then the rows close up, then the column names go, and the line under them last.
+        ViewThatFits(in: .vertical) {
+            layout(rowSpacing: nil, heading: true, line: true)
+            layout(rowSpacing: 4, heading: true, line: true)
+            layout(rowSpacing: 4, heading: false, line: true)
+            layout(rowSpacing: 4, heading: false, line: false)
+        }
+    }
+
+    private func layout(rowSpacing: CGFloat?, heading: Bool, line: Bool) -> some View {
         let width = measured?.width ?? PreviewSize.content(.systemMedium).width
-        VStack(alignment: .leading, spacing: 0) {
-            LimitsTable(plans: entry.plans, now: entry.date, width: width)
-            Spacer(minLength: 6)
-            if entry.freshnessNote != nil {
+        return VStack(alignment: .leading, spacing: 0) {
+            LimitsTable(plans: entry.plans, now: entry.date, width: width, rowSpacing: rowSpacing, heading: heading)
+            Spacer(minLength: line ? 6 : 0)
+            if !line {
+                EmptyView()
+            } else if entry.freshnessNote != nil {
                 FreshnessNote(entry: entry)
             } else if entry.plans.contains(where: { $0.warning != nil }) {
                 WarningLines(plans: entry.plans, width: width, lines: 1)
@@ -998,17 +1017,29 @@ struct AllPlansLarge: View {
     @Environment(\.widgetContentSize) private var measured
 
     var body: some View {
+        // A Mac's large widget has about 308 points of height inside its margins, which the table with
+        // reset times, two lines of reader problems and the totals can overrun. Then the problems take
+        // one line, then the totals go (the totals widget has them), then the reset times.
+        ViewThatFits(in: .vertical) {
+            layout(warningLines: family == .systemExtraLarge ? 1 : 2, totals: true, captions: true)
+            layout(warningLines: 1, totals: true, captions: true)
+            layout(warningLines: 1, totals: false, captions: true)
+            layout(warningLines: 1, totals: false, captions: false)
+        }
+    }
+
+    private func layout(warningLines: Int, totals: Bool, captions: Bool) -> some View {
         let wide = family == .systemExtraLarge
         let width = measured?.width ?? PreviewSize.content(family).width
-        VStack(alignment: .leading, spacing: 0) {
+        return VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 9) {
                 WidgetHeader(entry: entry, title: "AI plan limits")
                 LimitsTable(plans: entry.plans, now: entry.date, width: width,
-                            roomy: true, fullTitles: wide)
-                WarningLines(plans: entry.plans, width: width, lines: wide ? 1 : 2)
+                            roomy: captions, fullTitles: wide)
+                WarningLines(plans: entry.plans, width: width, lines: warningLines)
             }
             Spacer(minLength: 8)
-            if let summary = entry.summary {
+            if totals, let summary = entry.summary {
                 TotalsSection(summary: summary, compact: !wide)
             }
         }
@@ -1130,26 +1161,36 @@ struct UsageWidgetView: View {
                     }
                 }
             } else {
-                VStack(alignment: .leading, spacing: 8) {
-                    WidgetHeader(entry: entry, title: summary.rangeLabel)
-                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)],
-                              alignment: .leading, spacing: 8) {
-                        ForEach(all) { stat in
-                            VStack(alignment: .leading, spacing: 1) {
-                                StatLabel(stat: stat).font(.system(size: 9.5)).foregroundStyle(palette.muted)
-                                Text(stat.value).font(.system(size: 19, weight: .bold)).monospacedDigit()
-                                    .foregroundStyle(palette.primary).lineLimit(1).minimumScaleFactor(0.6)
-                                Text(stat.hint).font(.system(size: 9)).foregroundStyle(palette.muted)
-                                    .lineLimit(1).minimumScaleFactor(0.8)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                    }
-                    Spacer(minLength: 0)
+                // The hints under the numbers go first when a Mac's medium widget is too short for them.
+                ViewThatFits(in: .vertical) {
+                    grid(summary, all, hints: true, palette: palette)
+                    grid(summary, all, hints: false, palette: palette)
                 }
             }
         } else {
             UnavailableView(entry: entry)
+        }
+    }
+
+    private func grid(_ summary: UsageSummary, _ all: [Stat], hints: Bool, palette: Palette) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            WidgetHeader(entry: entry, title: summary.rangeLabel)
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)],
+                      alignment: .leading, spacing: 8) {
+                ForEach(all) { stat in
+                    VStack(alignment: .leading, spacing: 1) {
+                        StatLabel(stat: stat).font(.system(size: 9.5)).foregroundStyle(palette.muted)
+                        Text(stat.value).font(.system(size: 19, weight: .bold)).monospacedDigit()
+                            .foregroundStyle(palette.primary).lineLimit(1).minimumScaleFactor(0.6)
+                        if hints {
+                            Text(stat.hint).font(.system(size: 9)).foregroundStyle(palette.muted)
+                                .lineLimit(1).minimumScaleFactor(0.8)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            Spacer(minLength: 0)
         }
     }
 }
@@ -1185,21 +1226,28 @@ struct MeasuredWidget<Content: View>: View {
 
 // MARK: - Previews outside WidgetKit (the app's window and image renders)
 
+/// The sizes macOS gave the widgets on a MacBook Air (Nov 2026, from chronod's log), smaller than the
+/// iPhone sizes: a large widget is 344 points square, not 364 by 382. Other Macs can differ, which is
+/// why placed widgets measure their space (MeasuredWidget); these keep the renders honest.
 enum PreviewSize {
     static func points(_ family: WidgetFamily) -> CGSize {
         switch family {
-        case .systemSmall: return CGSize(width: 170, height: 170)
-        case .systemMedium: return CGSize(width: 364, height: 170)
-        case .systemLarge: return CGSize(width: 364, height: 382)
-        case .systemExtraLarge: return CGSize(width: 749, height: 382)
-        default: return CGSize(width: 170, height: 170)
+        case .systemSmall: return CGSize(width: 164, height: 164)
+        case .systemMedium: return CGSize(width: 344, height: 164)
+        case .systemLarge: return CGSize(width: 344, height: 344)
+        case .systemExtraLarge: return CGSize(width: 704, height: 344)
+        default: return CGSize(width: 164, height: 164)
         }
     }
 
-    /// The area inside the widget's 16-point margins.
+    /// The desktop widget's margin on that Mac, measured from a screenshot (about 17.8 points).
+    static let margin: CGFloat = 18
+    static let cornerRadius: CGFloat = 28
+
+    /// The area inside the margins.
     static func content(_ family: WidgetFamily) -> CGSize {
         let size = points(family)
-        return CGSize(width: size.width - 32, height: size.height - 32)
+        return CGSize(width: size.width - 2 * margin, height: size.height - 2 * margin)
     }
 }
 
@@ -1211,11 +1259,12 @@ struct WidgetCard<Content: View>: View {
 
     var body: some View {
         let size = PreviewSize.points(family)
+        let corner = RoundedRectangle(cornerRadius: PreviewSize.cornerRadius, style: .continuous)
         MeasuredWidget { content }
-            .padding(16)
+            .padding(PreviewSize.margin)
             .frame(width: size.width, height: size.height, alignment: .topLeading)
             .background(Palette(scheme: scheme).background)
-            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(Color.primary.opacity(0.08)))
+            .clipShape(corner)
+            .overlay(corner.strokeBorder(Color.primary.opacity(0.08)))
     }
 }

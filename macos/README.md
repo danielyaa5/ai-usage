@@ -94,10 +94,11 @@ one, a cached reading keeps its original time, and the app's failures and refres
 widgets reusing it), addresses, formatting, reader errors in a few words and the age of old readings.
 They don't show that a placed widget draws; check that on the desktop after installing.
 
-macOS gives widgets other sizes than the ones the renders use, and they can differ between Macs, so
-the layouts measure the space they get. Each timeline logs the widget's real size:
-`/usr/bin/log show --last 1h --predicate 'category == "timeline"'` (in zsh, plain `log` is a
-different command).
+The renders use the sizes macOS gave widgets on a MacBook Air (small 164 points square, medium 344 by
+164, large 344 square, extra large 704 by 344, with 18-point margins), which are smaller than the
+iPhone sizes. Other Macs can differ, so placed widgets measure the space they get, and each timeline
+logs the widget's real size: `/usr/bin/log show --last 1h --predicate 'category == "timeline"'` (in
+zsh, plain `log` is a different command).
 
 ## Troubleshooting
 
