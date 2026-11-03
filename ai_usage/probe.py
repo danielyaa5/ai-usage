@@ -12,7 +12,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from .store import get_kv, put_limit, set_kv
+from .store import drop_expired_limits, get_kv, put_limit, set_kv
 
 MODEL = 'claude-haiku-5-5'
 TIMEOUT = 90
@@ -61,12 +61,19 @@ def record(db, info, observed_at=None):
     if not windows and info.get('rateLimitType'):
         windows = {info['rateLimitType']: {'utilization': info.get('utilization'), 'resetsAt': info.get('resetsAt')}}
     extra = {k: info.get(k) for k in ('status', 'overageStatus', 'overageDisabledReason', 'isUsingOverage')}
+    seen = []
     for name, window in windows.items():
         utilization = window.get('utilization')
         if utilization is None:
             continue
         put_limit(db, 'anthropic', name, round(float(utilization) * 100, 1), window.get('resetsAt'),
                   'Claude Max 20x', extra, observed_at)
+        seen.append(name)
+    if seen:
+        # Claude leaves a window out of its reply when it has no current value for it (the 5-hour
+        # window is missing for days at a time). A stored reading of such a window whose reset has
+        # passed describes a window that is over, so it goes instead of lingering as "reset due".
+        drop_expired_limits(db, 'anthropic', keep=seen, now=observed_at)
     return len(windows)
 
 

@@ -122,7 +122,8 @@ function renderPlans(d) {
       body += meter(l);
     });
     if (meta.vendor === 'anthropic' && limits.length) {
-      const extra = limits[0].extra || {};
+      // Every Claude reading carries the extra-usage state; the newest one is current.
+      const extra = limits.reduce((a, b) => ((b.observed_at || 0) > (a.observed_at || 0) ? b : a)).extra || {};
       if (extra.overageStatus) body += `<div class="meter-sub"><span>Extra usage: ${extra.overageStatus === 'rejected' ? 'off' : esc(extra.overageStatus)}${extra.isUsingOverage ? ' (in use)' : ''}</span></div>`;
     }
     if (!limits.length) {

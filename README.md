@@ -142,7 +142,9 @@ the logs still on disk; telemetry-only history and limit history would be lost.
 
 The Claude limit check spends one tiny Haiku request every 20 minutes (about $0.0005 at API prices)
 from your plan. Install with `python3 install.py --no-claude-probe` to turn it off; Claude's limits
-then stay blank.
+then stay blank. Claude's reply only includes the windows it has a current value for, and its 5-hour
+window can be missing for days. A stored window the reply leaves out is dropped once its reset time
+passes, so the dashboard doesn't keep showing a window that is over.
 
 ## License
 

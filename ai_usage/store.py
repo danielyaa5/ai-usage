@@ -140,6 +140,20 @@ def put_limit(db, vendor, window, used_pct, resets_at, plan=None, extra=None, ob
         db.commit()
 
 
+def drop_expired_limits(db, vendor, keep, now=None):
+    """Delete the vendor's stored windows that are not in `keep` (the windows its latest reading
+    reported) and whose reset time has passed. Their history stays. Returns how many went."""
+    now = int(now or time.time())
+    keep = list(keep)
+    marks = ','.join('?' * len(keep))
+    unreported = f' AND window NOT IN ({marks})' if keep else ''
+    with _lock:
+        cursor = db.execute('DELETE FROM limits WHERE vendor=? AND resets_at IS NOT NULL AND resets_at <= ?'
+                            + unreported, (vendor, now, *keep))
+        db.commit()
+        return cursor.rowcount
+
+
 def get_kv(db, key, default=None):
     row = db.execute('SELECT value FROM kv WHERE key=?', (key,)).fetchone()
     return json.loads(row['value']) if row else default

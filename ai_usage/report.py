@@ -221,9 +221,11 @@ def widget(db, range_name='7d', now=None):
                                 left_pct=round(left, 1), level=left_level(left),
                                 resets_at=l['resets_at'], observed_at=l['observed_at']))
         notes = []
-        overage = (limits_here[0]['extra'] or {}).get('overageStatus') if vendor == 'anthropic' and limits_here else None
+        # Extra usage comes with every Claude reading; the newest one says what it is now.
+        latest = max(limits_here, key=lambda l: l['observed_at'] or 0, default=None) if vendor == 'anthropic' else None
+        overage = (latest['extra'] or {}).get('overageStatus') if latest else None
         if overage:
-            in_use = ' (in use)' if (limits_here[0]['extra'] or {}).get('isUsingOverage') else ''
+            in_use = ' (in use)' if (latest['extra'] or {}).get('isUsingOverage') else ''
             notes.append(f"Extra usage: {'off' if overage == 'rejected' else overage}{in_use}")
         if plan['label']:
             title = plan['label']

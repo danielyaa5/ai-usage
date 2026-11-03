@@ -262,6 +262,29 @@ class ProbeTest(Base):
         limits = {r['window']: r['used_pct'] for r in self.db.execute('SELECT * FROM limits')}
         self.assertEqual(limits, {'five_hour': 4.0, 'seven_day': 31.0})
 
+    def test_drops_a_window_claude_stopped_reporting_once_it_has_reset(self):
+        start = 1793000000
+        weekly = lambda used: {'status': 'allowed', 'overageStatus': 'allowed', 'unifiedWindows': {
+            'seven_day': {'utilization': used, 'resetsAt': start + 4 * 86400}}}
+        windows = lambda: {(r['vendor'], r['window']): r['used_pct'] for r in self.db.execute('SELECT * FROM limits')}
+        probe.record(self.db, {'status': 'allowed', 'unifiedWindows': {
+            'five_hour': {'utilization': 0.02, 'resetsAt': start + 3600},
+            'seven_day': {'utilization': 0.10, 'resetsAt': start + 4 * 86400}}}, observed_at=start)
+        store.put_limit(self.db, 'openai', 'codex_primary', 40.0, start + 60, 'pro', {}, start)
+        # Until its reset the 5-hour reading still stands, though the reply left it out.
+        probe.record(self.db, weekly(0.11), observed_at=start + 1800)
+        self.assertEqual(windows(), {('anthropic', 'five_hour'): 2.0, ('anthropic', 'seven_day'): 11.0,
+                                     ('openai', 'codex_primary'): 40.0})
+        # After it, the reading describes a window that is over. Its history and other vendors stay.
+        probe.record(self.db, weekly(0.12), observed_at=start + 7200)
+        self.assertEqual(windows(), {('anthropic', 'seven_day'): 12.0, ('openai', 'codex_primary'): 40.0})
+        self.assertEqual({r['window'] for r in self.db.execute("SELECT window FROM limit_history WHERE vendor='anthropic'")},
+                         {'five_hour', 'seven_day'})
+        # A reply without windows changes nothing.
+        store.put_limit(self.db, 'anthropic', 'five_hour', 5.0, start + 3 * 3600, 'Claude Max 20x', {}, start + 2 * 3600)
+        probe.record(self.db, {'status': 'allowed'}, observed_at=start + 4 * 3600)
+        self.assertEqual(windows()[('anthropic', 'five_hour')], 5.0)
+
     def test_finds_the_desktop_apps_cli_when_the_link_is_stale(self):
         home = self.dir / 'home'
         (home / '.local/bin').mkdir(parents=True)
@@ -413,6 +436,15 @@ class ReportAndServerTest(Base):
         self.assertEqual(totals['cache_share'], round(30 / 60 * 100))
         self.assertEqual(report.short_group(None), None)
         self.assertEqual(report.short_group('Models'), 'Models')
+
+    def test_widget_takes_extra_usage_from_the_newest_claude_reading(self):
+        now = time.time()
+        store.put_limit(self.db, 'anthropic', 'five_hour', 2.0, int(now) + 600, 'Claude Max 20x',
+                        {'status': 'allowed', 'overageStatus': 'rejected'}, int(now) - 3 * 86400)
+        store.put_limit(self.db, 'anthropic', 'seven_day', 21.0, int(now) + 86400, 'Claude Max 20x',
+                        {'status': 'allowed', 'overageStatus': 'allowed', 'isUsingOverage': True}, int(now) - 60)
+        claude = {p['vendor']: p for p in report.widget(self.db, '7d', now)['plans']}['anthropic']
+        self.assertEqual(claude['notes'], ['Extra usage: allowed (in use)'])
 
     def test_dashboard_serves_widget_api_and_relative_page(self):
         import http.client
