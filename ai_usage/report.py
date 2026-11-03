@@ -190,6 +190,21 @@ SHORT_NAMES = {'anthropic': 'Claude', 'openai': 'ChatGPT', 'google': 'Antigravit
 RANGE_LABELS = {'today': 'Today', '7d': 'Last 7 days', '30d': 'Last 30 days', 'all': 'All recorded'}
 
 
+def short_warning(error):
+    """A reader error in a few words, to follow the plan's name in narrow widgets ("Claude: CLI not
+    found"). The full text stays in `warning`."""
+    if not error:
+        return None
+    text = error.lower()
+    if 'cli not found' in text:
+        return 'CLI not found'
+    if 'not running' in text:
+        return 'app not running'
+    if 'no rate limits' in text or 'did not return quota' in text:
+        return 'no limits returned'
+    return 'limit check failed'
+
+
 def short_group(name):
     """'Gemini Models' -> 'Gemini', 'Claude and GPT models' -> 'Claude and GPT'."""
     if not name:
@@ -236,7 +251,7 @@ def widget(db, range_name='7d', now=None):
         plans.append(dict(plan=plan['plan'], title=title, short=SHORT_NAMES.get(vendor, plan['plan']), vendor=vendor,
                           monthly_usd=plan['monthly_usd'], cost=plan['cost'], prorated_usd=plan['prorated_usd'],
                           requests=plan['requests'], tokens=plan['tokens'], windows=windows, notes=notes,
-                          warning=errors.get(vendor) or None))
+                          warning=errors.get(vendor) or None, warning_short=short_warning(errors.get(vendor))))
     totals = data['totals']
     automated = [j for j in data['jobs'] if j['automated']]
     top = automated[0] if automated else None

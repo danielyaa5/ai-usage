@@ -126,8 +126,9 @@ in the proxy, since the dashboard then sees the proxy's loopback address.
 ## JSON for widgets
 
 `/api/widget?range=7d` (or `today`, `30d`, `all`) returns a small, display-ready summary: each plan
-with its limit windows (percent left, level, reset and reading times) and any reader error, and the
-period's totals. The macOS widgets in [`macos/`](macos/README.md) read it.
+with its limit windows (percent left, level, reset and reading times) and any reader error (in full,
+and in a few words for narrow layouts), and the period's totals. The macOS widgets in
+[`macos/`](macos/README.md) read it.
 
 ## Operate
 

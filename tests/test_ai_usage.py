@@ -420,12 +420,12 @@ class ReportAndServerTest(Base):
         claude = plans['anthropic']
         self.assertEqual([(w['label'], w['left_pct'], w['level']) for w in claude['windows']],
                          [('5-hour', 98.0, 'good'), ('Weekly', 24.5, 'warning')])
-        self.assertEqual((claude['notes'], claude['warning'], claude['short']),
-                         (['Extra usage: off'], 'Probe: Claude CLI not found', 'Claude'))
+        self.assertEqual((claude['notes'], claude['warning'], claude['warning_short'], claude['short']),
+                         (['Extra usage: off'], 'Probe: Claude CLI not found', 'CLI not found', 'Claude'))
         self.assertEqual((claude['requests'], claude['cost']), (1, 1.5))
         self.assertEqual([(w['label'], w['left_pct'], w['level']) for w in plans['openai']['windows']],
                          [('Weekly', 5.0, 'critical')])
-        self.assertIsNone(plans['openai']['warning'])
+        self.assertEqual((plans['openai']['warning'], plans['openai']['warning_short']), (None, None))
         google = plans['google']
         self.assertEqual(google['title'], 'Google AI Ultra (Antigravity)')
         self.assertEqual([(w['group_short'], w['left_pct']) for w in google['windows']],
@@ -435,6 +435,11 @@ class ReportAndServerTest(Base):
         self.assertEqual(totals['top_background_job'], {'job': 'Scheduled: Morning Brief', 'cost': 1.5})
         self.assertEqual(totals['cache_share'], round(30 / 60 * 100))
         self.assertEqual(report.short_group(None), None)
+        self.assertEqual([report.short_warning(e) for e in (
+            'The Antigravity app is not running on this Mac, so limits are not refreshing.',
+            'Antigravity is running but did not return quota: timed out', 'Codex returned no rate limits',
+            'Probe: no rate_limit_event (exit 1): error', 'process list failed: denied')],
+            ['app not running', 'no limits returned', 'no limits returned', 'limit check failed', 'limit check failed'])
         self.assertEqual(report.short_group('Models'), 'Models')
 
     def test_widget_takes_extra_usage_from_the_newest_claude_reading(self):
