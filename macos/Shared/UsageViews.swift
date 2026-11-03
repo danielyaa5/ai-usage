@@ -11,7 +11,8 @@ import AIUsageKit
 // large 332×350, extra large 717×350. Percentages are never cut short. Where text could run out of
 // room, the layouts measure it and pick a shorter form, the same one for every row, or offer leaner
 // versions of themselves to a ViewThatFits. A reading that is out of date is drawn in gray with a faded
-// bar, and its time is given in amber where there is room for it.
+// bar, and its time is given in amber where there is room for it. Table cells get fixed slots, so the
+// bars line up whatever the numbers are.
 
 // MARK: - Building blocks
 
@@ -31,7 +32,7 @@ struct MeterBar: View {
         GeometryReader { geometry in
             ZStack(alignment: .leading) {
                 Capsule().fill(palette.track)
-                Capsule().fill(palette.fill(level).opacity(dim ? 0.4 : 1))
+                Capsule().fill(palette.fill(level).opacity(dim ? (palette.dark ? 0.55 : 0.45) : 1))
                     .frame(width: geometry.size.width * fraction)
                     .widgetAccentable()
                 Capsule().strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5)
@@ -57,9 +58,9 @@ struct PlanSwatch: View {
 }
 
 /// "72%", or "72% left", in the level's color, or gray when the reading is old or the window has reset
-/// since. `icons` adds a clock in front of an old reading and the level's icon in front of a low one;
-/// narrow layouts leave them out and say elsewhere how old the reading is. Always drawn whole: the
-/// views beside it give way.
+/// since (the line under it, or a line at the bottom of the widget, says how old). `icons` adds the
+/// level's icon in front of a low, current reading; narrow layouts leave it out. Always drawn whole:
+/// the views beside it give way.
 struct PercentLeft: View {
     var window: LimitWindow
     var now: Date
@@ -71,25 +72,29 @@ struct PercentLeft: View {
     var body: some View {
         let palette = Palette(scheme: scheme)
         let status = window.status
-        let old = window.isOld(now: now)
-        let color = old ? palette.muted : status == .good ? palette.primary : palette.text(status)
         HStack(alignment: .firstTextBaseline, spacing: 2) {
-            if icons && (old || status != .good) {
-                Image(systemName: old ? "clock.badge.exclamationmark" : status.symbol)
+            if icons && status != .good && !window.isOld(now: now) {
+                Image(systemName: status.symbol)
                     .font(.system(size: size * 0.75))
-                    .foregroundStyle(old ? palette.stale : palette.text(status))
+                    .foregroundStyle(palette.text(status))
             }
-            (Text(Format.percent(window.leftPct))
-                .font(.system(size: size, weight: .semibold))
-                .monospacedDigit()
-                .foregroundStyle(color)
-             + Text(left ? " left" : "")
-                .font(.system(size: size * 0.8))
-                .foregroundStyle(palette.muted))
+            Self.text(window, now: now, size: size, left: left, palette: palette)
         }
         .lineLimit(1)
         .fixedSize()
         .layoutPriority(1)
+    }
+
+    /// The percentage, and " left" when `left`, in its color.
+    static func text(_ window: LimitWindow, now: Date, size: CGFloat, left: Bool, palette: Palette) -> Text {
+        let status = window.status
+        let color = window.isOld(now: now) ? palette.muted : status == .good ? palette.primary : palette.text(status)
+        let percent = Text(Format.percent(window.leftPct))
+            .font(.system(size: size, weight: .semibold))
+            .monospacedDigit()
+            .foregroundStyle(color)
+        guard left else { return percent }
+        return percent + Text(" left").font(.system(size: size * 0.8)).foregroundStyle(palette.muted)
     }
 }
 
@@ -166,6 +171,11 @@ func textWidth(_ text: String, size: CGFloat, weight: NSFont.Weight = .regular, 
 /// The width PercentLeft takes without icons: "100%", or "100% left".
 func percentWidth(_ text: String = "100%", size: CGFloat, left: Bool) -> CGFloat {
     textWidth(text, size: size, weight: .semibold, digits: true) + (left ? textWidth(" left", size: size * 0.8) : 0)
+}
+
+/// A table cell's percent slot: "100%" with a little to spare.
+func percentSlot(size: CGFloat) -> CGFloat {
+    percentWidth(size: size, left: false) + 2
 }
 
 /// Room for the longest time to a reset among `windows` ("15h 58m", "reset due"), so every cell of a
@@ -561,7 +571,7 @@ struct LimitsTable: View {
             if roomy {
                 StackedCell(window: window, now: now)
             } else {
-                InlineCell(window: window, now: now, untilWidth: untilWidth)
+                InlineCell(window: window, now: now, percentWidth: percentSlot(size: 11), untilWidth: untilWidth)
             }
         } else {
             Color.clear.frame(width: 0, height: 0)
@@ -582,13 +592,14 @@ struct LimitsTable: View {
     }
 }
 
-/// A table cell on one line: percent left, a bar, and the time to the reset. The percent's slot is as
-/// wide as "100%" and the time's is `untilWidth`, so the bars of a table line up and nothing spills
-/// into the next column.
+/// A table cell on one line: percent left, a bar, and the time to the reset. The percent and the time
+/// get fixed slots, the same in every cell of a table (`percentSlot(size:)` and `untilSlot`), so the
+/// bars line up and nothing spills into the next column.
 struct InlineCell: View {
     var window: LimitWindow
     var now: Date
     var size: CGFloat = 11
+    var percentWidth: CGFloat
     var untilWidth: CGFloat = 42
     @Environment(\.colorScheme) private var scheme
 
@@ -596,11 +607,10 @@ struct InlineCell: View {
         let palette = Palette(scheme: scheme)
         let old = window.isOld(now: now)
         HStack(spacing: 4) {
-            ZStack(alignment: .trailing) {
-                Text(verbatim: "100%").font(.system(size: size, weight: .semibold)).monospacedDigit().hidden()
-                PercentLeft(window: window, now: now, size: size, icons: false)
-            }
-            .fixedSize()
+            PercentLeft.text(window, now: now, size: size, left: false, palette: palette)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .frame(width: percentWidth, alignment: .trailing)
             MeterBar(left: window.leftPct, level: window.status, height: 4, dim: old)
                 .frame(minWidth: 14)
             Text(window.untilReset(now: now))
@@ -837,7 +847,8 @@ struct SinglePlanSmall: View {
         if plan.windows.isEmpty {
             Text("No limit reading yet.").font(.system(size: 11)).foregroundStyle(palette.muted)
         } else if plan.hasGroups {
-            let labelWidth = (plan.windows.map { textWidth($0.shortLabel, size: 9.5) }.max() ?? 0) + 1
+            let labelWidth = (plan.windows.map { textWidth($0.shortLabel, size: 9.5) }.max() ?? 0) + 2
+            let percentWidth = percentSlot(size: 10.5)
             let untilWidth = untilSlot(plan.windows, now: entry.date)
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(grouped(plan.windows)) { group in
@@ -853,8 +864,10 @@ struct SinglePlanSmall: View {
                                         .font(.system(size: 9.5))
                                         .foregroundStyle(palette.secondary)
                                         .lineLimit(1)
+                                        .minimumScaleFactor(0.85)
                                         .frame(width: labelWidth, alignment: .leading)
-                                    InlineCell(window: window, now: entry.date, size: 10.5, untilWidth: untilWidth)
+                                    InlineCell(window: window, now: entry.date, size: 10.5, percentWidth: percentWidth,
+                                               untilWidth: untilWidth)
                                 }
                             }
                         }
