@@ -262,6 +262,21 @@ class ProbeTest(Base):
         limits = {r['window']: r['used_pct'] for r in self.db.execute('SELECT * FROM limits')}
         self.assertEqual(limits, {'five_hour': 4.0, 'seven_day': 31.0})
 
+    def test_finds_the_desktop_apps_cli_when_the_link_is_stale(self):
+        home = self.dir / 'home'
+        (home / '.local/bin').mkdir(parents=True)
+        (home / '.local/bin/claude').symlink_to(home / probe.DESKTOP_CLI / '2.1.9/old/claude.app/Contents/MacOS/claude')
+        for version in ('2.1.10', '2.1.9b', '2.1.11'):
+            binary = home / probe.DESKTOP_CLI / version / 'abc123/claude.app/Contents/MacOS/claude'
+            binary.parent.mkdir(parents=True)
+            binary.write_text('#!/bin/sh\n')
+            binary.chmod(0o755 if version != '2.1.11' else 0o644)
+        with mock.patch.object(probe.shutil, 'which', return_value=None), mock.patch.object(Path, 'home', return_value=home):
+            self.assertEqual(probe.claude_binary(), str(home / probe.DESKTOP_CLI / '2.1.10/abc123/claude.app/Contents/MacOS/claude'))
+            for binary in (home / probe.DESKTOP_CLI).glob('*/*/claude.app/Contents/MacOS/claude'):
+                binary.unlink()
+            self.assertIsNone(probe.claude_binary())
+
 
 class AntigravityQuotaTest(Base):
     SUMMARY = {'response': {'groups': [

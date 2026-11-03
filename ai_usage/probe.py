@@ -20,10 +20,28 @@ STRIP = ('ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'CLA
          'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY', 'CLAUDECODE')
 
 
+# The Claude desktop app keeps its own copy of the CLI here, one folder per version.
+DESKTOP_CLI = 'Library/Application Support/Claude/claude-code'
+
+
 def claude_binary():
+    """The `claude` command, or the newest copy the Claude desktop app keeps. The app's link in
+    ~/.local/bin names one version folder and breaks when the app deletes that version."""
     found = shutil.which('claude')
     candidate = Path.home() / '.local/bin/claude'
-    return found or (str(candidate) if candidate.exists() else None)
+    if found or candidate.exists():
+        return found or str(candidate)
+    base = Path.home() / DESKTOP_CLI
+    copies = [p for p in base.glob('*/*/claude.app/Contents/MacOS/claude') if os.access(p, os.X_OK)]
+    return str(max(copies, key=lambda p: version_key(p.relative_to(base).parts[0]))) if copies else None
+
+
+def version_key(name):
+    """'2.1.309' -> (2, 1, 309); anything else sorts first."""
+    try:
+        return tuple(int(part) for part in name.split('.'))
+    except ValueError:
+        return ()
 
 
 def parse(stdout):
