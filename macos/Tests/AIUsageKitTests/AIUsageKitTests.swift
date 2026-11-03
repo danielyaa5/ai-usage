@@ -43,7 +43,8 @@ let fixture = #"""
    "notes": [
     "Extra usage: off"
    ],
-   "warning": null
+   "warning": null,
+   "warning_short": null
   },
   {
    "plan": "ChatGPT Pro",
@@ -76,7 +77,8 @@ let fixture = #"""
     }
    ],
    "notes": [],
-   "warning": "codex app-server timed out"
+   "warning": "codex app-server timed out",
+   "warning_short": "limit check failed"
   },
   {
    "plan": "Google (Antigravity)",
@@ -127,7 +129,8 @@ let fixture = #"""
     }
    ],
    "notes": [],
-   "warning": null
+   "warning": null,
+   "warning_short": null
   }
  ],
  "totals": {
@@ -162,6 +165,8 @@ final class SummaryTests: XCTestCase {
         XCTAssertEqual(claude.windows.map(\.label), ["5-hour", "Weekly"])
         XCTAssertEqual(claude.tightest?.label, "Weekly")
         XCTAssertEqual(summary.plan(vendor: "openai")?.warning, "codex app-server timed out")
+        XCTAssertEqual(summary.plan(vendor: "openai")?.warningShort, "limit check failed")
+        XCTAssertNil(claude.warningShort)
         let google = try XCTUnwrap(summary.plan(vendor: "google"))
         XCTAssertEqual(google.windows.count, 4)
         XCTAssertEqual(google.windows[0].groupShort, "Gemini")
@@ -301,6 +306,28 @@ final class SummaryTests: XCTestCase {
         let sample = UsageSummary.sample()
         XCTAssertEqual(sample.plans.count, 3)
         XCTAssertTrue(sample.plans.allSatisfy { !$0.windows.isEmpty })
+    }
+
+    func testWarningInAFewWords() {
+        var plan = UsageSummary.sample().plans[0]
+        XCTAssertNil(plan.warningPhrase)
+        // An older dashboard sends only the full text.
+        plan.warning = "Probe: Claude CLI not found"
+        XCTAssertEqual(plan.warningPhrase, "Claude CLI not found")
+        plan.warning = "The Antigravity app is not running on this Mac, so limits are not refreshing."
+        XCTAssertEqual(plan.warningPhrase, "limit check failed")
+        plan.warningShort = "app not running"
+        XCTAssertEqual(plan.warningPhrase, "app not running")
+    }
+
+    func testOldestStaleReading() {
+        let now = Date(timeIntervalSince1970: 1793700000)
+        var plan = UsageSummary.sample(now: now).plans[2]
+        XCTAssertNil(plan.oldestStaleReading(now: now))
+        plan.windows[1].observedAt = now.addingTimeInterval(-7 * 3600)
+        plan.windows[3].observedAt = now.addingTimeInterval(-9 * 3600)
+        plan.windows[0].observedAt = now.addingTimeInterval(-5 * 3600)
+        XCTAssertEqual(plan.oldestStaleReading(now: now), now.addingTimeInterval(-9 * 3600))
     }
 }
 

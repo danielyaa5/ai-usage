@@ -8,8 +8,10 @@ import AIUsageKit
 // takes its size as a parameter instead of reading it from the widget environment.
 //
 // They are planned for macOS's widget content areas (16-point margins): small 138×138, medium 332×138,
-// large 332×350, extra large 717×350. Percentages are never cut short; the labels beside them give way
-// first. Titles don't shrink to fit, so plans side by side read at the same size.
+// large 332×350, extra large 717×350. Percentages are never cut short. Where text could run out of
+// room, the layouts measure it and pick a shorter form, the same one for every row, or offer leaner
+// versions of themselves to a ViewThatFits. A reading that is out of date is drawn in gray with a faded
+// bar, and its time is given in amber where there is room for it.
 
 // MARK: - Building blocks
 
@@ -19,6 +21,8 @@ struct MeterBar: View {
     var left: Double
     var level: Level
     var height: CGFloat = 5
+    /// Faded, for a reading that is out of date.
+    var dim = false
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
@@ -27,7 +31,7 @@ struct MeterBar: View {
         GeometryReader { geometry in
             ZStack(alignment: .leading) {
                 Capsule().fill(palette.track)
-                Capsule().fill(palette.fill(level))
+                Capsule().fill(palette.fill(level).opacity(dim ? 0.4 : 1))
                     .frame(width: geometry.size.width * fraction)
                     .widgetAccentable()
                 Capsule().strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5)
@@ -52,21 +56,25 @@ struct PlanSwatch: View {
     }
 }
 
-/// "72%", or "72% left", in the level's color, with a clock when the reading is old or the window has
-/// reset since. Always drawn whole: the views beside it give way.
+/// "72%", or "72% left", in the level's color, or gray when the reading is old or the window has reset
+/// since. `icons` adds a clock in front of an old reading and the level's icon in front of a low one;
+/// narrow layouts leave them out and say elsewhere how old the reading is. Always drawn whole: the
+/// views beside it give way.
 struct PercentLeft: View {
     var window: LimitWindow
     var now: Date
     var size: CGFloat = 12
     var left = false
+    var icons = true
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         let palette = Palette(scheme: scheme)
         let status = window.status
         let old = window.isOld(now: now)
+        let color = old ? palette.muted : status == .good ? palette.primary : palette.text(status)
         HStack(alignment: .firstTextBaseline, spacing: 2) {
-            if old || status != .good {
+            if icons && (old || status != .good) {
                 Image(systemName: old ? "clock.badge.exclamationmark" : status.symbol)
                     .font(.system(size: size * 0.75))
                     .foregroundStyle(old ? palette.stale : palette.text(status))
@@ -74,7 +82,7 @@ struct PercentLeft: View {
             (Text(Format.percent(window.leftPct))
                 .font(.system(size: size, weight: .semibold))
                 .monospacedDigit()
-                .foregroundStyle(status == .good ? palette.primary : palette.text(status))
+                .foregroundStyle(color)
              + Text(left ? " left" : "")
                 .font(.system(size: size * 0.8))
                 .foregroundStyle(palette.muted))
@@ -114,6 +122,17 @@ extension LimitWindow {
 extension Plan {
     /// Whether the plan's windows come in model groups, as Antigravity's do.
     var hasGroups: Bool { windows.contains { $0.groupShort != nil } }
+
+    /// The window with the least left among those that haven't reset since their reading, so a window
+    /// that is over doesn't stand for the plan.
+    func firstToRunOut(now: Date) -> LimitWindow? {
+        windows.filter { !$0.resetPassed(now: now) }.min { $0.leftPct < $1.leftPct } ?? tightest
+    }
+}
+
+extension String {
+    /// "App not running" from "app not running".
+    var capitalizedFirst: String { prefix(1).uppercased() + dropFirst() }
 }
 
 /// A plan's windows for one model group (Antigravity has two); `group` is nil for the other plans.
@@ -136,37 +155,78 @@ func grouped(_ windows: [LimitWindow]) -> [LimitGroup] {
     return out
 }
 
-/// The width of a line of text in the system font, for sizing a column to its longest label.
-func textWidth(_ text: String, size: CGFloat, weight: NSFont.Weight = .regular) -> CGFloat {
-    ceil((text as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: size, weight: weight)]).width)
+/// The width of a line of text in the system font, for sizing columns and choosing between long and
+/// short forms. `digits` measures the even-width digits that `monospacedDigit()` draws.
+func textWidth(_ text: String, size: CGFloat, weight: NSFont.Weight = .regular, digits: Bool = false) -> CGFloat {
+    let font = digits ? NSFont.monospacedDigitSystemFont(ofSize: size, weight: weight)
+        : NSFont.systemFont(ofSize: size, weight: weight)
+    return ceil((text as NSString).size(withAttributes: [.font: font]).width)
 }
 
-/// Label, percent left, bar and when it resets. `inline` puts the time to the reset after the label
-/// instead of under the bar, which saves a line in the medium widget.
+/// The width PercentLeft takes without icons: "100%", or "100% left".
+func percentWidth(_ text: String = "100%", size: CGFloat, left: Bool) -> CGFloat {
+    textWidth(text, size: size, weight: .semibold, digits: true) + (left ? textWidth(" left", size: size * 0.8) : 0)
+}
+
+/// Room for the longest time to a reset among `windows` ("15h 58m", "reset due"), so every cell of a
+/// table gets the same slot and the bars line up.
+func untilSlot(_ windows: [LimitWindow], now: Date, size: CGFloat = 9.5) -> CGFloat {
+    let widest = windows.map { textWidth($0.untilReset(now: now), size: size, digits: true) }.max() ?? 0
+    return min(50, max(30, widest + 1))
+}
+
+/// Which plans' limit readings are more than six hours old, for the medium widget's last line; nil
+/// when none are.
+func staleLimitsText(_ plans: [Plan], now: Date, width: CGFloat) -> String? {
+    let stale = plans.compactMap { plan -> (name: String, ago: String)? in
+        guard let at = plan.oldestStaleReading(now: now) else { return nil }
+        return (plan.short, Format.ago(at, now: now))
+    }
+    guard let first = stale.first else { return nil }
+    if stale.count == 1 { return "\(first.name) limits as of \(first.ago)" }
+    let long = stale.map { "\($0.name) as of \($0.ago)" }.joined(separator: " · ")
+    if textWidth(long, size: 9.5, weight: .medium) <= width - 16 { return long }
+    return "Old limit readings: " + stale.map { $0.name }.joined(separator: ", ")
+}
+
+/// Label, percent left, bar and the line under it: when it resets, or how old the reading is. `inline`
+/// puts the time to the reset after the label instead, which saves a line in the medium widget, and
+/// `caption: false` leaves the line out.
 struct WindowRow: View {
     var window: LimitWindow
     var now: Date
     var percentSize: CGFloat = 13
     var inline = false
+    var caption = true
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         let palette = Palette(scheme: scheme)
         let until = window.untilReset(now: now)
+        let old = window.isOld(now: now)
         VStack(alignment: .leading, spacing: 3) {
             HStack(alignment: .firstTextBaseline, spacing: 3) {
-                Text(inline && !until.isEmpty ? "\(window.label) · \(until)" : window.label)
+                Text(window.label)
                     .font(.system(size: 11))
                     .foregroundStyle(palette.secondary)
                     .lineLimit(1)
+                    .layoutPriority(1)
+                if inline && !until.isEmpty {
+                    Text("· \(until)")
+                        .font(.system(size: 10))
+                        .monospacedDigit()
+                        .foregroundStyle(old ? palette.stale : palette.muted)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                }
                 Spacer(minLength: 2)
-                PercentLeft(window: window, now: now, size: percentSize, left: true)
+                PercentLeft(window: window, now: now, size: percentSize, left: true, icons: !inline)
             }
-            MeterBar(left: window.leftPct, level: window.status)
-            if !inline {
+            MeterBar(left: window.leftPct, level: window.status, dim: old)
+            if caption && !inline {
                 Text(window.caption(now: now))
                     .font(.system(size: 9.5))
-                    .foregroundStyle(window.isOld(now: now) ? palette.stale : palette.muted)
+                    .foregroundStyle(old ? palette.stale : palette.muted)
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
             }
@@ -174,43 +234,14 @@ struct WindowRow: View {
     }
 }
 
-/// Half a small widget: "5h 98%", a thin bar and the time to the reset.
-struct MiniCell: View {
-    var window: LimitWindow
-    var now: Date
-    var caption = true
-    @Environment(\.colorScheme) private var scheme
-
-    var body: some View {
-        let palette = Palette(scheme: scheme)
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(alignment: .firstTextBaseline, spacing: 3) {
-                Text(window.shortLabel)
-                    .font(.system(size: 10))
-                    .foregroundStyle(palette.secondary)
-                    .lineLimit(1)
-                Spacer(minLength: 2)
-                PercentLeft(window: window, now: now, size: 11)
-            }
-            MeterBar(left: window.leftPct, level: window.status, height: 4)
-            if caption {
-                Text(window.untilReset(now: now))
-                    .font(.system(size: 9))
-                    .monospacedDigit()
-                    .foregroundStyle(window.resetPassed(now: now) ? palette.stale : palette.muted)
-                    .lineLimit(1)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
 /// The plan's swatch and name. `full` uses the whole title ("Claude Max 20x") when it fits and the
-/// short name ("Antigravity") when it doesn't.
+/// short name ("Antigravity") when it doesn't. `warningIcon` adds a triangle when the plan's reader
+/// reports a problem; layouts that spell the problem out under the plan leave it off.
 struct PlanTitle: View {
     var plan: Plan
     var full = false
     var size: CGFloat = 12
+    var warningIcon = true
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
@@ -225,7 +256,7 @@ struct PlanTitle: View {
             } else {
                 name(plan.short, palette)
             }
-            if plan.warning != nil {
+            if warningIcon && plan.warning != nil {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.system(size: size * 0.75))
                     .foregroundStyle(palette.text(.warning))
@@ -241,9 +272,11 @@ struct PlanTitle: View {
             .lineLimit(1)
     }
 
-    /// The width this title takes, for sizing a table's label column.
-    static func width(_ plan: Plan, full: Bool, size: CGFloat, limit: CGFloat) -> CGFloat {
-        let extras = size * 0.66 + 5 + (plan.warning != nil ? 5 + size * 0.9 : 0)
+    /// The width this title takes, for sizing a table's label column and choosing a title size.
+    static func width(_ plan: Plan, full: Bool = false, size: CGFloat, limit: CGFloat = .infinity,
+                      warningIcon: Bool = true) -> CGFloat {
+        let icon: CGFloat = warningIcon && plan.warning != nil ? 5 + size * 0.9 : 0
+        let extras = size * 0.66 + 5 + icon
         let whole = textWidth(plan.title, size: size, weight: .semibold) + extras
         if full && whole <= limit { return whole }
         return textWidth(plan.short, size: size, weight: .semibold) + extras
@@ -273,23 +306,83 @@ struct FreshnessNote: View {
     }
 }
 
-/// Reader problems the dashboard reports, such as "Probe: Claude CLI not found".
+/// Reader problems the dashboard reports across plans: the full errors when they fit in `lines` lines
+/// of `width`, else each plan's in a few words ("Claude: CLI not found"), else which plans have one.
 struct WarningLines: View {
     var plans: [Plan]
+    var width: CGFloat
     var lines = 2
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        let warnings = plans.compactMap(\.warning)
-        if !warnings.isEmpty {
+        if let text = Self.text(plans, width: width, lines: lines) {
             HStack(alignment: .firstTextBaseline, spacing: 3) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                Text(warnings.joined(separator: " · "))
+                Text(text)
             }
             .font(.system(size: 9.5))
             .foregroundStyle(Palette(scheme: scheme).text(.warning))
             .lineLimit(lines)
         }
+    }
+
+    static func text(_ plans: [Plan], width: CGFloat, lines: Int) -> String? {
+        let warned = plans.filter { $0.warning != nil }
+        guard !warned.isEmpty else { return nil }
+        // Wrapped lines don't fill to the edge, so a second line counts for less.
+        let room = (width - 16) * (lines > 1 ? CGFloat(lines) * 0.85 : 1)
+        let full = warned.compactMap { $0.warning }.joined(separator: " · ")
+        if textWidth(full, size: 9.5) <= room { return full }
+        let short = warned.map { "\($0.short): \($0.warningPhrase ?? "")" }.joined(separator: " · ")
+        if textWidth(short, size: 9.5) <= room { return short }
+        return "Problems reading limits: " + warned.map { $0.short }.joined(separator: ", ")
+    }
+}
+
+/// One plan's reader problem. With `oneLine` it takes a line of that width, in a few words when the
+/// whole error doesn't fit; without, it wraps the whole error onto as many lines as `maxLines` allows
+/// (nil: all it needs).
+struct WarningText: View {
+    var plan: Plan
+    var oneLine: CGFloat? = nil
+    var maxLines: Int? = nil
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        if let warning = plan.warning {
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                if let width = oneLine {
+                    Text(textWidth(warning, size: 9.5, weight: .medium) <= width - 16
+                         ? warning : (plan.warningPhrase ?? warning).capitalizedFirst)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                } else {
+                    Text(warning)
+                        .lineLimit(maxLines)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .font(.system(size: 9.5, weight: .medium))
+            .foregroundStyle(Palette(scheme: scheme).text(.warning))
+        }
+    }
+}
+
+/// How old limit readings are ("Limits as of 7 h ago"), in layouts without a line under each window.
+struct AgeLine: View {
+    var text: String
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 3) {
+            Image(systemName: "clock")
+            Text(text)
+        }
+        .font(.system(size: 9.5, weight: .medium))
+        .foregroundStyle(Palette(scheme: scheme).stale)
+        .lineLimit(1)
+        .minimumScaleFactor(0.85)
     }
 }
 
@@ -422,6 +515,7 @@ struct LimitsTable: View {
         let palette = Palette(scheme: scheme)
         let columns = limitColumns(plans)
         let labelWidth = self.labelWidth
+        let untilWidth = untilSlot(plans.flatMap(\.windows), now: now)
         Grid(alignment: .leading, horizontalSpacing: roomy ? 12 : 8, verticalSpacing: roomy ? 8 : 7) {
             GridRow {
                 Text(corner)
@@ -440,7 +534,7 @@ struct LimitsTable: View {
                 GridRow(alignment: .firstTextBaseline) {
                     label(row, palette: palette)
                         .frame(width: labelWidth, alignment: .leading)
-                    cells(row, columns: columns, palette: palette)
+                    cells(row, columns: columns, untilWidth: untilWidth, palette: palette)
                 }
             }
         }
@@ -448,7 +542,7 @@ struct LimitsTable: View {
 
     /// The row's cells, one per column, or a note across them when the plan has no reading.
     @ViewBuilder
-    private func cells(_ row: LimitRow, columns: [String], palette: Palette) -> some View {
+    private func cells(_ row: LimitRow, columns: [String], untilWidth: CGFloat, palette: Palette) -> some View {
         if row.kind == .plan && row.windows.isEmpty {
             Text("No reading yet")
                 .font(.system(size: 10))
@@ -456,18 +550,18 @@ struct LimitsTable: View {
                 .gridCellColumns(max(1, columns.count))
         } else {
             ForEach(columns, id: \.self) { column in
-                cell(row.windows.first { $0.label == column })
+                cell(row.windows.first { $0.label == column }, untilWidth: untilWidth)
             }
         }
     }
 
     @ViewBuilder
-    private func cell(_ window: LimitWindow?) -> some View {
+    private func cell(_ window: LimitWindow?, untilWidth: CGFloat) -> some View {
         if let window {
             if roomy {
                 StackedCell(window: window, now: now)
             } else {
-                InlineCell(window: window, now: now)
+                InlineCell(window: window, now: now, untilWidth: untilWidth)
             }
         } else {
             Color.clear.frame(width: 0, height: 0)
@@ -488,27 +582,34 @@ struct LimitsTable: View {
     }
 }
 
-/// A medium table cell on one line: percent left, a bar, and the time to the reset.
+/// A table cell on one line: percent left, a bar, and the time to the reset. The percent's slot is as
+/// wide as "100%" and the time's is `untilWidth`, so the bars of a table line up and nothing spills
+/// into the next column.
 struct InlineCell: View {
     var window: LimitWindow
     var now: Date
+    var size: CGFloat = 11
+    var untilWidth: CGFloat = 42
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         let palette = Palette(scheme: scheme)
+        let old = window.isOld(now: now)
         HStack(spacing: 4) {
-            // Wide enough for "100%", so the bars start in line.
-            PercentLeft(window: window, now: now, size: 11)
-                .frame(minWidth: 31, alignment: .trailing)
-            MeterBar(left: window.leftPct, level: window.status, height: 4)
+            ZStack(alignment: .trailing) {
+                Text(verbatim: "100%").font(.system(size: size, weight: .semibold)).monospacedDigit().hidden()
+                PercentLeft(window: window, now: now, size: size, icons: false)
+            }
+            .fixedSize()
+            MeterBar(left: window.leftPct, level: window.status, height: 4, dim: old)
                 .frame(minWidth: 14)
             Text(window.untilReset(now: now))
                 .font(.system(size: 9.5))
                 .monospacedDigit()
-                .foregroundStyle(window.resetPassed(now: now) ? palette.stale : palette.muted)
+                .foregroundStyle(old ? palette.stale : palette.muted)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
-                .frame(width: 42, alignment: .leading)
+                .frame(width: untilWidth, alignment: .leading)
         }
     }
 }
@@ -523,7 +624,7 @@ struct StackedCell: View {
         let palette = Palette(scheme: scheme)
         VStack(alignment: .leading, spacing: 3) {
             PercentLeft(window: window, now: now, size: 12, left: true)
-            MeterBar(left: window.leftPct, level: window.status)
+            MeterBar(left: window.leftPct, level: window.status, dim: window.isOld(now: now))
             Text(window.caption(now: now))
                 .font(.system(size: 9.5))
                 .foregroundStyle(window.isOld(now: now) ? palette.stale : palette.muted)
@@ -558,108 +659,221 @@ struct LimitsWidgetView: View {
     }
 }
 
-/// Each plan's tightest window: what runs out first.
+/// Each plan's tightest window: what runs out first. Under each bar, the reader's problem, or how old
+/// the reading is, or when the window resets.
 struct AllPlansSmall: View {
     var entry: UsageEntry
     @Environment(\.colorScheme) private var scheme
 
+    private var width: CGFloat { PreviewSize.content(.systemSmall).width }
+
     var body: some View {
-        let palette = Palette(scheme: scheme)
-        let note = entry.freshnessNote != nil
-        VStack(alignment: .leading, spacing: note ? 4 : 7) {
-            ForEach(entry.plans) { plan in
-                if let window = plan.tightest {
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(alignment: .firstTextBaseline, spacing: 3) {
-                            PlanTitle(plan: plan, size: 12)
-                            Spacer(minLength: 2)
-                            PercentLeft(window: window, now: entry.date, size: 12, left: true)
-                        }
-                        MeterBar(left: window.leftPct, level: window.status)
-                        if !note {
-                            caption(window, palette: palette)
-                        }
-                    }
-                } else {
-                    HStack(alignment: .firstTextBaseline) {
-                        PlanTitle(plan: plan, size: 12)
-                        Spacer(minLength: 2)
-                        Text("no reading").font(.system(size: 10)).foregroundStyle(palette.muted)
-                    }
-                }
-            }
-            Spacer(minLength: 0)
-            FreshnessNote(entry: entry)
+        ViewThatFits(in: .vertical) {
+            layout(captions: true)
+            layout(captions: false)
         }
     }
 
-    /// "Weekly · resets in 2d 1h", shortened to "Gemini weekly · 2d 10h" when that doesn't fit.
-    private func caption(_ window: LimitWindow, palette: Palette) -> some View {
-        let until = window.untilReset(now: entry.date)
-        let resets = window.resetPassed(now: entry.date) ? until : Format.resets(window.resetsAt, now: entry.date)
-        return ViewThatFits(in: .horizontal) {
-            Text(resets.isEmpty ? window.name : "\(window.name) · \(resets)")
-            Text(until.isEmpty ? window.name : "\(window.name) · \(until)")
-                .minimumScaleFactor(0.85)
+    private func layout(captions: Bool) -> some View {
+        let palette = Palette(scheme: scheme)
+        let note = entry.freshnessNote != nil
+        let size = titleSize(warningIcon: !captions)
+        let long = longCaptions()
+        return VStack(alignment: .leading, spacing: note ? 4 : 6) {
+            ForEach(entry.plans) { plan in
+                row(plan, captions: captions, titleSize: size, long: long, palette: palette)
+            }
+            Spacer(minLength: 0)
+            if note {
+                FreshnessNote(entry: entry)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func row(_ plan: Plan, captions: Bool, titleSize: CGFloat, long: Bool, palette: Palette) -> some View {
+        if let window = plan.firstToRunOut(now: entry.date) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .firstTextBaseline, spacing: 3) {
+                    PlanTitle(plan: plan, size: titleSize, warningIcon: !captions)
+                    Spacer(minLength: 2)
+                    PercentLeft(window: window, now: entry.date, size: 12, left: true, icons: false)
+                }
+                MeterBar(left: window.leftPct, level: window.status, dim: window.isOld(now: entry.date))
+                if captions {
+                    caption(plan, window, long: long, palette: palette)
+                }
+            }
+        } else {
+            HStack(alignment: .firstTextBaseline) {
+                PlanTitle(plan: plan, size: titleSize)
+                Spacer(minLength: 2)
+                Text("no reading").font(.system(size: 10)).foregroundStyle(palette.muted)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func caption(_ plan: Plan, _ window: LimitWindow, long: Bool, palette: Palette) -> some View {
+        if let phrase = plan.warningPhrase {
+            iconLine("exclamationmark.triangle.fill", phrase.capitalizedFirst, color: palette.text(.warning))
+        } else if window.isOld(now: entry.date) {
+            iconLine("clock", "\(window.name) · \(oldNote(window))", color: palette.stale)
+        } else {
+            Text(plainCaption(window, long: long))
+                .font(.system(size: 9.5))
+                .foregroundStyle(palette.muted)
+                .lineLimit(1)
+        }
+    }
+
+    private func iconLine(_ symbol: String, _ text: String, color: Color) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 2) {
+            Image(systemName: symbol)
+            Text(text)
         }
         .font(.system(size: 9.5))
-        .foregroundStyle(window.isOld(now: entry.date) ? palette.stale : palette.muted)
+        .foregroundStyle(color)
         .lineLimit(1)
+        .minimumScaleFactor(0.85)
+    }
+
+    /// "reset due", or how old the reading is: "7 h ago".
+    private func oldNote(_ window: LimitWindow) -> String {
+        window.resetPassed(now: entry.date) ? "reset due" : Format.ago(window.observedAt, now: entry.date)
+    }
+
+    private func plainCaption(_ window: LimitWindow, long: Bool) -> String {
+        guard let left = Format.remaining(until: window.resetsAt, now: entry.date) else { return window.name }
+        return long ? "\(window.name) · resets in \(left)" : "\(window.name) · \(left)"
+    }
+
+    /// "Weekly · resets in 2d 1h" when every plan's line fits that way, else "Weekly · 2d 1h" on all.
+    private func longCaptions() -> Bool {
+        entry.plans.allSatisfy { plan in
+            guard let window = plan.firstToRunOut(now: entry.date), plan.warning == nil, !window.isOld(now: entry.date) else {
+                return true
+            }
+            return textWidth(plainCaption(window, long: true), size: 9.5) <= width
+        }
+    }
+
+    /// 12-point titles unless one of them doesn't fit beside "100% left"; then all a size smaller.
+    private func titleSize(warningIcon: Bool) -> CGFloat {
+        let percent = percentWidth(size: 12, left: true)
+        for size in [12, 11] as [CGFloat] {
+            let fits = entry.plans.allSatisfy {
+                PlanTitle.width($0, size: size, warningIcon: warningIcon) + 5 + percent <= width
+            }
+            if fits { return size }
+        }
+        return 10
     }
 }
 
+/// One plan in the small size: Antigravity's windows a line each under their model group, the other
+/// plans' a bar each with the reset time under it. Then the reader's problem, how old the readings are
+/// and the offline note; when they don't all fit, the reset times go first, then the error is
+/// shortened, then the lines go in the order age, problem, note.
 struct SinglePlanSmall: View {
     var plan: Plan
     var entry: UsageEntry
     @Environment(\.colorScheme) private var scheme
 
+    private enum Bottom { case note, warning, age }
+
+    private var width: CGFloat { PreviewSize.content(.systemSmall).width }
+
     var body: some View {
+        ViewThatFits(in: .vertical) {
+            layout(captions: true, fullWarning: true, lines: 3)
+            layout(captions: true, fullWarning: false, lines: 3)
+            layout(captions: false, fullWarning: true, lines: 3)
+            layout(captions: false, fullWarning: false, lines: 3)
+            layout(captions: false, fullWarning: false, lines: 2)
+            layout(captions: false, fullWarning: false, lines: 1)
+        }
+    }
+
+    private func layout(captions: Bool, fullWarning: Bool, lines: Int) -> some View {
         let palette = Palette(scheme: scheme)
-        let note = entry.freshnessNote != nil
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                PlanTitle(plan: plan, full: true, size: 12)
-                if plan.hasGroups {
-                    Spacer(minLength: 4)
-                    Text("% left").font(.system(size: 9)).foregroundStyle(palette.muted).fixedSize()
+        // Rows without a line under them leave the readings' age to a line at the bottom.
+        let age = plan.hasGroups || !captions ? plan.oldestStaleReading(now: entry.date) : nil
+        let wanted: [Bottom?] = [entry.freshnessNote != nil ? Bottom.note : nil,
+                                 plan.warning != nil ? Bottom.warning : nil,
+                                 age != nil ? Bottom.age : nil]
+        let kept = Array(wanted.compactMap { $0 }.prefix(lines))
+        return VStack(alignment: .leading, spacing: 0) {
+            header(palette)
+            windows(captions: captions, palette: palette)
+                .padding(.top, plan.hasGroups ? 4 : 5)
+            Spacer(minLength: 3)
+            VStack(alignment: .leading, spacing: 2) {
+                if kept.contains(.warning) {
+                    WarningText(plan: plan, oneLine: fullWarning ? nil : width)
+                }
+                if kept.contains(.age), let age {
+                    AgeLine(text: "Limits as of \(Format.ago(age, now: entry.date))")
+                }
+                if kept.contains(.note) {
+                    FreshnessNote(entry: entry)
                 }
             }
-            if plan.windows.isEmpty {
-                Text("No limit reading yet.").font(.system(size: 11)).foregroundStyle(palette.muted)
-            } else if plan.hasGroups {
+        }
+    }
+
+    private func header(_ palette: Palette) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+            PlanTitle(plan: plan, full: true, size: 12)
+            if plan.hasGroups {
+                Spacer(minLength: 4)
+                Text("% left").font(.system(size: 9)).foregroundStyle(palette.muted).fixedSize()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func windows(captions: Bool, palette: Palette) -> some View {
+        if plan.windows.isEmpty {
+            Text("No limit reading yet.").font(.system(size: 11)).foregroundStyle(palette.muted)
+        } else if plan.hasGroups {
+            let labelWidth = (plan.windows.map { textWidth($0.shortLabel, size: 9.5) }.max() ?? 0) + 1
+            let untilWidth = untilSlot(plan.windows, now: entry.date)
+            VStack(alignment: .leading, spacing: 4) {
                 ForEach(grouped(plan.windows)) { group in
-                    VStack(alignment: .leading, spacing: 3) {
+                    VStack(alignment: .leading, spacing: 1) {
                         Text(group.group ?? "Other")
                             .font(.system(size: 9.5, weight: .semibold))
                             .foregroundStyle(palette.muted)
                             .lineLimit(1)
-                        HStack(alignment: .top, spacing: 10) {
-                            ForEach(group.windows.prefix(2)) { window in
-                                MiniCell(window: window, now: entry.date, caption: !note)
+                        VStack(alignment: .leading, spacing: 2) {
+                            ForEach(group.windows) { window in
+                                HStack(spacing: 4) {
+                                    Text(window.shortLabel)
+                                        .font(.system(size: 9.5))
+                                        .foregroundStyle(palette.secondary)
+                                        .lineLimit(1)
+                                        .frame(width: labelWidth, alignment: .leading)
+                                    InlineCell(window: window, now: entry.date, size: 10.5, untilWidth: untilWidth)
+                                }
                             }
                         }
                     }
                 }
-            } else {
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
                 ForEach(plan.windows.prefix(2)) { window in
-                    WindowRow(window: window, now: entry.date, percentSize: 15)
+                    WindowRow(window: window, now: entry.date, percentSize: 15, caption: captions)
                 }
             }
-            Spacer(minLength: 0)
-            if let warning = plan.warning, !note {
-                Text(warning)
-                    .font(.system(size: 9.5, weight: .medium))
-                    .foregroundStyle(palette.text(.warning))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-            }
-            FreshnessNote(entry: entry)
         }
     }
 }
 
 /// One plan in a medium, large or extra-large widget: its windows two to a row (under each model
-/// group's name for Antigravity), then its API-equivalent value.
+/// group's name for Antigravity), then its API-equivalent value, the reader's problem and the
+/// offline note, as many of them as the size has room for.
 struct SinglePlanWide: View {
     var plan: Plan
     var entry: UsageEntry
@@ -670,6 +884,7 @@ struct SinglePlanWide: View {
         let palette = Palette(scheme: scheme)
         let medium = family == .systemMedium
         let note = entry.freshnessNote != nil
+        let width = PreviewSize.content(family).width
         let columns = [GridItem(.flexible(), spacing: 14, alignment: .top), GridItem(.flexible(), spacing: 14, alignment: .top)]
         VStack(alignment: .leading, spacing: medium ? 6 : 10) {
             HStack(alignment: .firstTextBaseline) {
@@ -699,40 +914,62 @@ struct SinglePlanWide: View {
                 }
             }
             Spacer(minLength: 0)
-            // The medium size has room for the value only beside ungrouped windows, and drops it
-            // when a warning and the freshness note both need a line.
-            if !medium || (!plan.hasGroups && !(note && plan.warning != nil)) {
-                VStack(alignment: .leading, spacing: 2) {
-                    (Text(Format.usd(plan.cost)).fontWeight(.semibold) + Text(" at API prices")
-                        + Text(plan.proratedUsd.map { " vs \(Format.usd($0)) of plan price" } ?? ""))
-                    Text("\(Format.grouped(plan.requests)) requests · \(Format.tokens(plan.tokens)) tokens · \(entry.summary?.rangeLabel.lowercased() ?? "")")
-                        .foregroundStyle(palette.muted)
+            if medium && plan.hasGroups {
+                // One line fits under the model groups: the offline note, else the reader's problem,
+                // else how old the readings are (the rows have no line of their own for it).
+                if note {
+                    FreshnessNote(entry: entry)
+                } else if plan.warning != nil {
+                    WarningText(plan: plan, oneLine: width)
+                } else if let age = plan.oldestStaleReading(now: entry.date) {
+                    AgeLine(text: "Limits as of \(Format.ago(age, now: entry.date))")
                 }
-                .font(.system(size: 10))
-                .foregroundStyle(palette.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
+            } else {
+                // The medium size drops the value when a warning and the freshness note both need a line.
+                if !medium || !(note && plan.warning != nil) {
+                    value(palette)
+                }
+                if plan.warning != nil, !(medium && note) {
+                    WarningText(plan: plan, oneLine: medium ? width : nil, maxLines: 2)
+                }
+                if note {
+                    FreshnessNote(entry: entry)
+                }
             }
-            if let warning = plan.warning, !(medium && note) {
-                Text(warning)
-                    .font(.system(size: 9.5, weight: .medium))
-                    .foregroundStyle(palette.text(.warning))
-                    .lineLimit(1)
-            }
-            FreshnessNote(entry: entry)
         }
+    }
+
+    private func value(_ palette: Palette) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            (Text(Format.usd(plan.cost)).fontWeight(.semibold) + Text(" at API prices")
+                + Text(plan.proratedUsd.map { " vs \(Format.usd($0)) of plan price" } ?? ""))
+            Text("\(Format.grouped(plan.requests)) requests · \(Format.tokens(plan.tokens)) tokens · \(entry.summary?.rangeLabel.lowercased() ?? "")")
+                .foregroundStyle(palette.muted)
+        }
+        .font(.system(size: 10))
+        .foregroundStyle(palette.secondary)
+        .lineLimit(1)
+        .minimumScaleFactor(0.8)
     }
 }
 
-/// The plans as a table, a line per limit.
+/// The plans as a table, a line per limit, and one line under it: the offline note, else the readers'
+/// problems, else which readings are old.
 struct AllPlansMedium: View {
     var entry: UsageEntry
 
     var body: some View {
+        let width = PreviewSize.content(.systemMedium).width
         VStack(alignment: .leading, spacing: 0) {
-            LimitsTable(plans: entry.plans, now: entry.date, width: PreviewSize.content(.systemMedium).width)
+            LimitsTable(plans: entry.plans, now: entry.date, width: width)
             Spacer(minLength: 6)
-            FreshnessNote(entry: entry)
+            if entry.freshnessNote != nil {
+                FreshnessNote(entry: entry)
+            } else if entry.plans.contains(where: { $0.warning != nil }) {
+                WarningLines(plans: entry.plans, width: width, lines: 1)
+            } else if let text = staleLimitsText(entry.plans, now: entry.date, width: width) {
+                AgeLine(text: text)
+            }
         }
     }
 }
@@ -749,7 +986,7 @@ struct AllPlansLarge: View {
                 WidgetHeader(entry: entry, title: "AI plan limits")
                 LimitsTable(plans: entry.plans, now: entry.date, width: PreviewSize.content(family).width,
                             roomy: true, fullTitles: wide)
-                WarningLines(plans: entry.plans, lines: wide ? 1 : 2)
+                WarningLines(plans: entry.plans, width: PreviewSize.content(family).width, lines: wide ? 1 : 2)
             }
             Spacer(minLength: 8)
             if let summary = entry.summary {
@@ -853,7 +1090,9 @@ struct UsageWidgetView: View {
                         }
                         .font(.system(size: 11))
                     }
-                    FreshnessNote(entry: entry)
+                    if entry.freshnessNote != nil {
+                        FreshnessNote(entry: entry).padding(.top, 3)
+                    }
                 }
             } else {
                 VStack(alignment: .leading, spacing: 8) {

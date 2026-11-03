@@ -143,10 +143,9 @@ enum PreviewRenderer {
         for (size, family) in sizes.prefix(2) {
             try save("totals-7d-\(size)-offline", family, UsageWidgetView(entry: totalsOffline, family: family))
         }
-        if sample, var summary = limits.summary {
-            summary.plans = summary.plans.map { troubled($0, now: now) }
+        if sample, let summary = limits.summary {
             var problems = limits
-            problems.summary = summary
+            problems.summary?.plans = summary.plans.map { troubled($0, now: now) }
             for (size, family) in sizes {
                 try save("limits-all-\(size)-problems", family, LimitsWidgetView(entry: problems, family: family))
             }
@@ -157,6 +156,27 @@ enum PreviewRenderer {
                     try save("limits-\(vendor)-\(size)-problems", family, LimitsWidgetView(entry: entry, family: family))
                 }
             }
+            // Problems while offline: every bottom line wants room at once.
+            var problemsOffline = problems
+            problemsOffline.error = offline.error
+            problemsOffline.fetchedAt = offline.fetchedAt
+            try save("limits-all-small-problems-offline", .systemSmall,
+                     LimitsWidgetView(entry: problemsOffline, family: .systemSmall))
+            for vendor in ["anthropic", "google"] {
+                var entry = problemsOffline
+                entry.vendor = vendor
+                try save("limits-\(vendor)-small-problems-offline", .systemSmall,
+                         LimitsWidgetView(entry: entry, family: .systemSmall))
+            }
+            // Old readings with no reader error: Antigravity's from seven hours ago.
+            var old = limits
+            old.summary?.plans = summary.plans.map { aged($0, now: now) }
+            for (size, family) in sizes.prefix(2) {
+                try save("limits-all-\(size)-old", family, LimitsWidgetView(entry: old, family: family))
+                var google = old
+                google.vendor = "google"
+                try save("limits-google-\(size)-old", family, LimitsWidgetView(entry: google, family: family))
+            }
         }
         let empty = UsageEntry(date: now, summary: nil, fetchedAt: nil, error: "timed out",
                                server: UsageClient.normalize("my-mac.local:8796")!, vendor: nil)
@@ -165,12 +185,14 @@ enum PreviewRenderer {
     }
 
     /// The sample with what real readings run into: a Claude reading three days old and past its
-    /// reset, reader errors, ChatGPT nearly out, and Antigravity readings seven hours old.
+    /// reset, the readers' own error texts, ChatGPT nearly out, and Antigravity readings seven hours
+    /// old because the app is closed.
     static func troubled(_ plan: Plan, now: Date) -> Plan {
         var plan = plan
         switch plan.vendor {
         case "anthropic":
             plan.warning = "Probe: Claude CLI not found"
+            plan.warningShort = "CLI not found"
             if !plan.windows.isEmpty {
                 plan.windows[0].observedAt = now.addingTimeInterval(-3 * 86400)
                 plan.windows[0].resetsAt = now.addingTimeInterval(-3 * 86400 + 2 * 3600)
@@ -183,12 +205,22 @@ enum PreviewRenderer {
                             observedAt: now.addingTimeInterval(-120)),
             ]
         case "google":
-            plan.warning = "Antigravity quota: no language server found"
+            plan.warning = "The Antigravity app is not running on this Mac, so limits are not refreshing."
+            plan.warningShort = "app not running"
+            plan = aged(plan, now: now)
+        default:
+            break
+        }
+        return plan
+    }
+
+    /// Antigravity's readings seven hours old, the other plans as they are.
+    static func aged(_ plan: Plan, now: Date) -> Plan {
+        var plan = plan
+        if plan.vendor == "google" {
             for index in plan.windows.indices {
                 plan.windows[index].observedAt = now.addingTimeInterval(-7 * 3600)
             }
-        default:
-            break
         }
         return plan
     }

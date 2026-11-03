@@ -4,15 +4,17 @@ Desktop and Notification Center widgets for the AI Usage dashboard, with a small
 keeps them current.
 
 - **AI plan limits** (small, medium, large, extra large): what's left of each plan's 5-hour and
-  weekly limits, when each resets, and any reader problem the dashboard reports (such as
-  "Probe: Claude CLI not found"). From the medium size up, the plans line up in a table with a column
-  per limit. Edit the widget to show one plan in more detail.
+  weekly limits, when each resets, and any reader problem the dashboard reports (in full where it
+  fits, such as "The Antigravity app is not running on this Mac", or as "Antigravity: app not
+  running"). From the medium size up, the plans line up in a table with a column per limit. Edit the
+  widget to show one plan in more detail.
 - **AI usage totals** (small, medium): API-equivalent value, model requests, tokens processed and
   background jobs, for today, the last 7 days or the last 30 days.
 
-Limits read 6 or more hours ago, and windows whose reset time has passed, get a clock icon, as on the
-dashboard. When the dashboard can't be reached the widgets keep the last reading and say how old it
-is ("Offline · from 14:05", or "Refresh needed" after 45 minutes); click that line to read again.
+Limits read 6 or more hours ago, and windows whose reset time has passed, are drawn in gray with a
+faded bar, and the widget says how old they are ("as of 7 h ago", "reset due") where it has room.
+When the dashboard can't be reached the widgets keep the last reading and say how old it is
+("Offline · from 14:05", or "Refresh needed" after 45 minutes); click that line to read again.
 Clicking a widget opens the dashboard.
 
 ## How it works
@@ -77,7 +79,9 @@ APP="/Applications/AI Usage.app/Contents/MacOS/AI Usage"
 ```
 
 `--render-previews` draws the same views the widgets use, at the system widget sizes, from the
-dashboard or (with `--sample`) from made-up numbers, which is what screenshots should use.
+dashboard or (with `--sample`) from made-up numbers, which is what screenshots should use. It also
+draws the states that need the most room: `-offline`, and with `--sample`, `-problems` (reader errors
+and old readings), `-problems-offline` and `-old`.
 
 ## Test
 
@@ -87,8 +91,8 @@ cd macos && swift test
 
 The tests cover the reply format, the shared cache (a newer reading is never replaced by an older
 one, a cached reading keeps its original time, and the app's failures and refresh requests stop the
-widgets reusing it), addresses and formatting. They don't show that a
-placed widget draws; check that on the desktop after installing.
+widgets reusing it), addresses, formatting, reader errors in a few words and the age of old readings.
+They don't show that a placed widget draws; check that on the desktop after installing.
 
 ## Troubleshooting
 

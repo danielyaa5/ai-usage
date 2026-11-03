@@ -57,12 +57,15 @@ public struct Plan: Codable, Equatable, Sendable, Identifiable {
     public var notes: [String]
     /// A limit reader's last error, such as the Claude probe failing.
     public var warning: String?
+    /// The same in a few words, written to follow the plan's name ("CLI not found"). Dashboards from
+    /// before November 2026 don't send it.
+    public var warningShort: String?
 
     public var id: String { plan }
 
     public init(plan: String, title: String, short: String, vendor: String, monthlyUsd: Double?, cost: Double,
                 proratedUsd: Double?, requests: Int, tokens: Int, windows: [LimitWindow], notes: [String] = [],
-                warning: String? = nil) {
+                warning: String? = nil, warningShort: String? = nil) {
         self.plan = plan
         self.title = title
         self.short = short
@@ -75,11 +78,30 @@ public struct Plan: Codable, Equatable, Sendable, Identifiable {
         self.windows = windows
         self.notes = notes
         self.warning = warning
+        self.warningShort = warningShort
     }
 
     /// The window with the least left: what runs out first.
     public var tightest: LimitWindow? {
         windows.min { $0.leftPct < $1.leftPct }
+    }
+
+    /// The reader's error in a few words, for narrow layouts. Without the dashboard's short form, a
+    /// short error is used as it is, after any "Probe: " style prefix.
+    public var warningPhrase: String? {
+        guard let warning else { return nil }
+        if let warningShort, !warningShort.isEmpty { return warningShort }
+        var text = Substring(warning)
+        if let colon = text.range(of: ": "), text.distance(from: text.startIndex, to: colon.lowerBound) <= 20 {
+            text = text[colon.upperBound...]
+        }
+        return text.count <= 24 ? String(text) : "limit check failed"
+    }
+
+    /// When the oldest of the plan's readings that are more than six hours old was taken; nil when
+    /// none is.
+    public func oldestStaleReading(now: Date = Date()) -> Date? {
+        windows.filter { $0.isStale(now: now) }.compactMap { $0.observedAt }.min()
     }
 }
 
