@@ -1,6 +1,7 @@
 import AppIntents
 import SwiftUI
 import WidgetKit
+import os
 import AIUsageKit
 
 @main
@@ -85,6 +86,16 @@ struct UsageTotalsIntent: WidgetConfigurationIntent {
 // MARK: - Timelines
 
 enum Timelines {
+    private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "AIUsageWidgets", category: "timeline")
+
+    /// Logs the size macOS gives the widget, which differs from the iPhone sizes in PreviewSize, so
+    /// the renders can be kept close to real widgets. Read it with
+    /// `/usr/bin/log show --last 1h --predicate 'category == "timeline"'` (zsh's `log` is another command).
+    static func note(_ context: TimelineProviderContext) {
+        let size = context.displaySize
+        log.notice("\(String(describing: context.family), privacy: .public) widget: \(Double(size.width), format: .fixed(precision: 1)) x \(Double(size.height), format: .fixed(precision: 1)) points")
+    }
+
     /// The app refreshes the shared reading every 5 minutes; a widget asks the dashboard itself only
     /// when that reading is older than this (the app isn't running, or is backing off).
     static let reuse: TimeInterval = 6 * 60
@@ -125,7 +136,8 @@ struct LimitsProvider: AppIntentTimelineProvider {
     }
 
     func timeline(for configuration: PlanLimitsIntent, in context: Context) async -> Timeline<UsageEntry> {
-        await Timelines.timeline(range: UsageRanges.limits, vendor: configuration.plan.vendor)
+        Timelines.note(context)
+        return await Timelines.timeline(range: UsageRanges.limits, vendor: configuration.plan.vendor)
     }
 }
 
@@ -139,7 +151,8 @@ struct TotalsProvider: AppIntentTimelineProvider {
     }
 
     func timeline(for configuration: UsageTotalsIntent, in context: Context) async -> Timeline<UsageEntry> {
-        await Timelines.timeline(range: configuration.period.range, vendor: nil)
+        Timelines.note(context)
+        return await Timelines.timeline(range: configuration.period.range, vendor: nil)
     }
 }
 
@@ -172,7 +185,7 @@ struct LimitsEntryView: View {
     @Environment(\.widgetFamily) private var family
 
     var body: some View {
-        LimitsWidgetView(entry: entry, family: family)
+        MeasuredWidget { LimitsWidgetView(entry: entry, family: family) }
             .modifier(WidgetBackground())
             .widgetURL(entry.tapURL)
     }
@@ -183,7 +196,7 @@ struct TotalsEntryView: View {
     @Environment(\.widgetFamily) private var family
 
     var body: some View {
-        UsageWidgetView(entry: entry, family: family)
+        MeasuredWidget { UsageWidgetView(entry: entry, family: family) }
             .modifier(WidgetBackground())
             .widgetURL(entry.tapURL)
     }

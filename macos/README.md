@@ -78,7 +78,7 @@ APP="/Applications/AI Usage.app/Contents/MacOS/AI Usage"
 "$APP" --render-previews ~/Desktop/widgets --sample   # every layout, light and dark, as PNG files
 ```
 
-`--render-previews` draws the same views the widgets use, at the system widget sizes, from the
+`--render-previews` draws the same views the widgets use, at fixed widget sizes (see Test), from the
 dashboard or (with `--sample`) from made-up numbers, which is what screenshots should use. It also
 draws the states that need the most room: `-offline`, and with `--sample`, `-problems` (reader errors
 and old readings), `-problems-offline` and `-old`.
@@ -94,6 +94,11 @@ one, a cached reading keeps its original time, and the app's failures and refres
 widgets reusing it), addresses, formatting, reader errors in a few words and the age of old readings.
 They don't show that a placed widget draws; check that on the desktop after installing.
 
+macOS gives widgets other sizes than the ones the renders use, and they can differ between Macs, so
+the layouts measure the space they get. Each timeline logs the widget's real size:
+`/usr/bin/log show --last 1h --predicate 'category == "timeline"'` (in zsh, plain `log` is a
+different command).
+
 ## Troubleshooting
 
 - **AI Usage isn't in the widget gallery.** Open the app once from /Applications. Keep a single copy
@@ -104,4 +109,4 @@ They don't show that a placed widget draws; check that on the desktop after inst
   update can turn it off; switching it off and on again restores it).
 - **Old numbers.** The widgets redraw within a few minutes of the app reading something new, but
   macOS decides exactly when. The menu bar panel always shows the latest reading.
-- **Logs.** `log stream --predicate 'process == "AIUsageWidgets" OR process == "AI Usage"'`.
+- **Logs.** `/usr/bin/log stream --predicate 'process == "AIUsageWidgets" OR process == "AI Usage"'`.

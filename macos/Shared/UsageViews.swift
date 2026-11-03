@@ -675,7 +675,8 @@ struct AllPlansSmall: View {
     var entry: UsageEntry
     @Environment(\.colorScheme) private var scheme
 
-    private var width: CGFloat { PreviewSize.content(.systemSmall).width }
+    @Environment(\.widgetContentSize) private var measured
+    private var width: CGFloat { measured?.width ?? PreviewSize.content(.systemSmall).width }
 
     var body: some View {
         ViewThatFits(in: .vertical) {
@@ -792,7 +793,8 @@ struct SinglePlanSmall: View {
 
     private enum Bottom { case note, warning, age }
 
-    private var width: CGFloat { PreviewSize.content(.systemSmall).width }
+    @Environment(\.widgetContentSize) private var measured
+    private var width: CGFloat { measured?.width ?? PreviewSize.content(.systemSmall).width }
 
     var body: some View {
         ViewThatFits(in: .vertical) {
@@ -892,12 +894,13 @@ struct SinglePlanWide: View {
     var entry: UsageEntry
     var family: WidgetFamily
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.widgetContentSize) private var measured
 
     var body: some View {
         let palette = Palette(scheme: scheme)
         let medium = family == .systemMedium
         let note = entry.freshnessNote != nil
-        let width = PreviewSize.content(family).width
+        let width = measured?.width ?? PreviewSize.content(family).width
         let columns = [GridItem(.flexible(), spacing: 14, alignment: .top), GridItem(.flexible(), spacing: 14, alignment: .top)]
         VStack(alignment: .leading, spacing: medium ? 6 : 10) {
             HStack(alignment: .firstTextBaseline) {
@@ -970,9 +973,10 @@ struct SinglePlanWide: View {
 /// problems, else which readings are old.
 struct AllPlansMedium: View {
     var entry: UsageEntry
+    @Environment(\.widgetContentSize) private var measured
 
     var body: some View {
-        let width = PreviewSize.content(.systemMedium).width
+        let width = measured?.width ?? PreviewSize.content(.systemMedium).width
         VStack(alignment: .leading, spacing: 0) {
             LimitsTable(plans: entry.plans, now: entry.date, width: width)
             Spacer(minLength: 6)
@@ -991,15 +995,17 @@ struct AllPlansMedium: View {
 struct AllPlansLarge: View {
     var entry: UsageEntry
     var family: WidgetFamily
+    @Environment(\.widgetContentSize) private var measured
 
     var body: some View {
         let wide = family == .systemExtraLarge
+        let width = measured?.width ?? PreviewSize.content(family).width
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 9) {
                 WidgetHeader(entry: entry, title: "AI plan limits")
-                LimitsTable(plans: entry.plans, now: entry.date, width: PreviewSize.content(family).width,
+                LimitsTable(plans: entry.plans, now: entry.date, width: width,
                             roomy: true, fullTitles: wide)
-                WarningLines(plans: entry.plans, width: PreviewSize.content(family).width, lines: wide ? 1 : 2)
+                WarningLines(plans: entry.plans, width: width, lines: wide ? 1 : 2)
             }
             Spacer(minLength: 8)
             if let summary = entry.summary {
@@ -1029,9 +1035,24 @@ func stats(_ summary: UsageSummary) -> [Stat] {
         Stat(label: "Model requests", short: "Requests", value: Format.grouped(t.requests),
              hint: "\(Format.tokens(t.output)) output tokens"),
         Stat(label: "Tokens processed", short: "Tokens", value: Format.tokens(t.tokens), hint: "\(t.cacheShare)% from cache"),
-        Stat(label: "Background jobs", short: "Background jobs", value: Format.usd(t.backgroundCost),
+        Stat(label: "Background jobs", short: "Background", value: Format.usd(t.backgroundCost),
              hint: t.topBackgroundJob.map { "top: \($0.job) (\(Format.usd($0.cost)))" } ?? "none in this period"),
     ]
+}
+
+/// A total's name: the full one where it fits on a line, else the short one ("Requests").
+struct StatLabel: View {
+    var stat: Stat
+    var short = false
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            if !short {
+                Text(stat.label).lineLimit(1)
+            }
+            Text(stat.short).lineLimit(1)
+        }
+    }
 }
 
 /// The totals under the large limits widget, with the period they cover.
@@ -1062,13 +1083,14 @@ struct TotalsRow: View {
         HStack(alignment: .top, spacing: 10) {
             ForEach(stats(summary)) { stat in
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(compact ? stat.short : stat.label)
-                        .font(.system(size: 9)).foregroundStyle(palette.muted).lineLimit(1)
+                    StatLabel(stat: stat, short: compact)
+                        .font(.system(size: 9)).foregroundStyle(palette.muted)
                     Text(stat.value)
                         .font(.system(size: compact ? 14 : 17, weight: .bold)).monospacedDigit()
                         .foregroundStyle(palette.primary).lineLimit(1).minimumScaleFactor(0.7)
                     if !compact {
-                        Text(stat.hint).font(.system(size: 9)).foregroundStyle(palette.muted).lineLimit(1)
+                        Text(stat.hint).font(.system(size: 9)).foregroundStyle(palette.muted)
+                            .lineLimit(1).minimumScaleFactor(0.8)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1114,7 +1136,7 @@ struct UsageWidgetView: View {
                               alignment: .leading, spacing: 8) {
                         ForEach(all) { stat in
                             VStack(alignment: .leading, spacing: 1) {
-                                Text(stat.label).font(.system(size: 9.5)).foregroundStyle(palette.muted).lineLimit(1)
+                                StatLabel(stat: stat).font(.system(size: 9.5)).foregroundStyle(palette.muted)
                                 Text(stat.value).font(.system(size: 19, weight: .bold)).monospacedDigit()
                                     .foregroundStyle(palette.primary).lineLimit(1).minimumScaleFactor(0.6)
                                 Text(stat.hint).font(.system(size: 9)).foregroundStyle(palette.muted)
@@ -1128,6 +1150,35 @@ struct UsageWidgetView: View {
             }
         } else {
             UnavailableView(entry: entry)
+        }
+    }
+}
+
+// MARK: - Measured size
+
+private struct WidgetContentSizeKey: EnvironmentKey {
+    static let defaultValue: CGSize? = nil
+}
+
+extension EnvironmentValues {
+    /// The space inside the widget's margins, as measured where it is drawn. The layouts measure their
+    /// text against this width, because macOS widgets come in other sizes than the ones in
+    /// PreviewSize (a large widget was about 25 points narrower on a MacBook Air).
+    var widgetContentSize: CGSize? {
+        get { self[WidgetContentSizeKey.self] }
+        set { self[WidgetContentSizeKey.self] = newValue }
+    }
+}
+
+/// Hands the measured size to the layouts and centers them, as WidgetKit does.
+struct MeasuredWidget<Content: View>: View {
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        GeometryReader { proxy in
+            content
+                .environment(\.widgetContentSize, proxy.size)
+                .frame(width: proxy.size.width, height: proxy.size.height)
         }
     }
 }
@@ -1160,7 +1211,7 @@ struct WidgetCard<Content: View>: View {
 
     var body: some View {
         let size = PreviewSize.points(family)
-        content
+        MeasuredWidget { content }
             .padding(16)
             .frame(width: size.width, height: size.height, alignment: .topLeading)
             .background(Palette(scheme: scheme).background)
