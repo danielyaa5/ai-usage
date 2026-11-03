@@ -715,7 +715,8 @@ struct AllPlansSmall: View {
         let long = longCaptions()
         return VStack(alignment: .leading, spacing: note ? 4 : 6) {
             ForEach(entry.plans) { plan in
-                row(plan, captions: captions, titleSize: fit.size, left: fit.left, long: long, palette: palette)
+                row(plan, captions: captions, titleSize: fit.size, left: fit.left.contains(plan.id), long: long,
+                    palette: palette)
             }
             Spacer(minLength: 0)
             if note {
@@ -729,9 +730,9 @@ struct AllPlansSmall: View {
                      palette: Palette) -> some View {
         if let window = plan.firstToRunOut(now: entry.date) {
             VStack(alignment: .leading, spacing: 2) {
-                HStack(alignment: .firstTextBaseline, spacing: 3) {
+                HStack(alignment: .firstTextBaseline, spacing: 0) {
                     PlanTitle(plan: plan, size: titleSize, warningIcon: !captions)
-                    Spacer(minLength: 2)
+                    Spacer(minLength: Self.gap)
                     PercentLeft(window: window, now: entry.date, size: 12, left: left, icons: false)
                 }
                 MeterBar(left: window.leftPct, level: window.status, dim: window.isOld(now: entry.date))
@@ -740,9 +741,9 @@ struct AllPlansSmall: View {
                 }
             }
         } else {
-            HStack(alignment: .firstTextBaseline) {
+            HStack(alignment: .firstTextBaseline, spacing: 0) {
                 PlanTitle(plan: plan, size: titleSize)
-                Spacer(minLength: 2)
+                Spacer(minLength: Self.gap)
                 Text("no reading").font(.system(size: 10)).foregroundStyle(palette.muted)
             }
         }
@@ -793,23 +794,36 @@ struct AllPlansSmall: View {
         }
     }
 
-    /// 12-point titles beside their percents with " left" unless one of them doesn't fit; then all a
-    /// size smaller, then the percents without " left" (a problem's triangle beside "Antigravity" can
-    /// need that), then 10 points. Each row is measured with the percent it shows, not "100%", so
-    /// " left" stays whenever it fits.
-    private func titleFit(warningIcon: Bool) -> (size: CGFloat, left: Bool) {
-        let steps: [(CGFloat, Bool)] = [(12, true), (11, true), (12, false), (11, false)]
-        for (size, left) in steps {
-            let fits = entry.plans.allSatisfy { plan in
-                let beside = plan.firstToRunOut(now: entry.date).map {
-                    percentWidth(Format.percent($0.leftPct), size: 12, left: left)
-                } ?? textWidth("no reading", size: 10)
-                // The row's spacing: 3 on each side of a spacer of at least 2.
-                return PlanTitle.width(plan, size: size, warningIcon: warningIcon) + beside + 8 <= width
+    /// The least room between a plan's name and its percent.
+    private static let gap: CGFloat = 6
+
+    /// One title size for every row, and the rows with room for " left" after their percents.
+    private struct TitleFit {
+        var size: CGFloat
+        var left: Set<Plan.ID>
+    }
+
+    /// Every title at 12 points with " left" after each percent when all of them fit, else at 11. When
+    /// even 11 is too wide (a long name beside "100%", or a problem's triangle beside "Antigravity"),
+    /// the largest size at which every row fits without " left" (12, 11 or 10 points), with " left" on
+    /// the rows that still have room. Each row is measured with the percent it shows.
+    private func titleFit(warningIcon: Bool) -> TitleFit {
+        func fits(_ plan: Plan, size: CGFloat, left: Bool) -> Bool {
+            guard let window = plan.firstToRunOut(now: entry.date) else {
+                // A plan with no reading shows its problem's triangle: it has no caption to say what's wrong.
+                return PlanTitle.width(plan, size: size) + Self.gap + textWidth("no reading", size: 10) <= width
             }
-            if fits { return (size, left) }
+            let percent = percentWidth(Format.percent(window.leftPct), size: 12, left: left)
+            return PlanTitle.width(plan, size: size, warningIcon: warningIcon) + Self.gap + percent <= width
         }
-        return (10, false)
+        let every = Set(entry.plans.map(\.id))
+        for size: CGFloat in [12, 11] where entry.plans.allSatisfy({ fits($0, size: size, left: true) }) {
+            return TitleFit(size: size, left: every)
+        }
+        for size: CGFloat in [12, 11, 10] where entry.plans.allSatisfy({ fits($0, size: size, left: false) }) {
+            return TitleFit(size: size, left: Set(entry.plans.filter { fits($0, size: size, left: true) }.map(\.id)))
+        }
+        return TitleFit(size: 10, left: [])
     }
 }
 

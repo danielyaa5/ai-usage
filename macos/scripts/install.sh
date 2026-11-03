@@ -35,6 +35,12 @@ touch "$TARGET"
 "$LSREGISTER" -f "$TARGET"
 "$LSREGISTER" -u "$SOURCE" 2>/dev/null || true
 pluginkit -a "$TARGET/Contents/PlugIns/AIUsageWidgets.appex" || true
+# Give macOS a few seconds to take in the new build before it reads the network: once, after a read
+# within a second of the install, the app and its widgets were refused local network access for about
+# ten minutes.
+sleep 5
+# A widget extension still running from the old build keeps drawing with it until it quits.
+pkill -x AIUsageWidgets 2>/dev/null || true
 open -g -a "$TARGET"
 
 echo "Installed $TARGET"

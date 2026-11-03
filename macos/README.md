@@ -106,8 +106,10 @@ zsh, plain `log` is a different command).
   of the app: remove other builds (`mdfind "kMDItemCFBundleIdentifier == '*AIUsage'"` lists them).
   Then `killall chronod NotificationCenter` and look again.
 - **"Can't reach AI Usage".** Check the address in a browser. If the browser works but the widgets
-  don't, see System Settings › Privacy & Security › Local Network and make sure AI Usage is on (an
-  update can turn it off; switching it off and on again restores it).
+  don't, see System Settings › Privacy & Security › Local Network and make sure AI Usage is on.
+  Right after an update macOS can refuse its connections for several minutes even so, and the app
+  tries again by itself. If it keeps failing, or an update turned it off, switching it off and on
+  again restores it.
 - **Old numbers.** The widgets redraw within a few minutes of the app reading something new, but
   macOS decides exactly when. The menu bar panel always shows the latest reading.
 - **Logs.** `/usr/bin/log stream --predicate 'process == "AIUsageWidgets" OR process == "AI Usage"'`.
