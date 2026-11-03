@@ -112,9 +112,15 @@ extension LimitWindow {
 
     /// What the line under a bar says: when it resets, or that the reading is old.
     func caption(now: Date) -> String {
-        if resetPassed(now: now) { return "reset due · as of \(Format.ago(observedAt, now: now))" }
-        if isStale(now: now) { return "as of \(Format.ago(observedAt, now: now))" }
-        return Format.resets(resetsAt, now: now)
+        captions(now: now).first ?? ""
+    }
+
+    /// The same, longest first, for a layout to take the first that fits.
+    func captions(now: Date) -> [String] {
+        let ago = Format.ago(observedAt, now: now)
+        if resetPassed(now: now) { return ["reset due · as of \(ago)", "reset due · \(ago)", "reset due"] }
+        if isStale(now: now) { return ["as of \(ago)", ago] }
+        return [Format.resets(resetsAt, now: now)] + (Format.remaining(until: resetsAt, now: now).map { [$0] } ?? [])
     }
 
     /// The short form for table cells: "2h 15m" to the reset, "reset due", or nothing.
@@ -234,13 +240,28 @@ struct WindowRow: View {
             }
             MeterBar(left: window.leftPct, level: window.status, dim: old)
             if caption && !inline {
-                Text(window.caption(now: now))
-                    .font(.system(size: 9.5))
-                    .foregroundStyle(old ? palette.stale : palette.muted)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.85)
+                CaptionText(window: window, now: now)
             }
         }
+    }
+}
+
+/// The line under a bar in the longest form that fits, at the same size as its neighbours: "reset due ·
+/// as of 3 d ago", then "reset due · 3 d ago", then "reset due"; "resets in 2d 1h", then "2d 1h".
+struct CaptionText: View {
+    var window: LimitWindow
+    var now: Date
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        let palette = Palette(scheme: scheme)
+        ViewThatFits(in: .horizontal) {
+            ForEach(window.captions(now: now), id: \.self) { text in
+                Text(text).lineLimit(1)
+            }
+        }
+        .font(.system(size: 9.5))
+        .foregroundStyle(window.isOld(now: now) ? palette.stale : palette.muted)
     }
 }
 
@@ -410,6 +431,8 @@ struct UnavailableView: View {
             Text("Can't reach AI Usage")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(palette.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
             Text(hostAndPort(entry.server))
                 .font(.system(size: 10).monospaced())
                 .foregroundStyle(palette.secondary)
@@ -634,18 +657,12 @@ struct InlineCell: View {
 struct StackedCell: View {
     var window: LimitWindow
     var now: Date
-    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        let palette = Palette(scheme: scheme)
         VStack(alignment: .leading, spacing: 3) {
             PercentLeft(window: window, now: now, size: 12, left: true)
             MeterBar(left: window.leftPct, level: window.status, dim: window.isOld(now: now))
-            Text(window.caption(now: now))
-                .font(.system(size: 9.5))
-                .foregroundStyle(window.isOld(now: now) ? palette.stale : palette.muted)
-                .lineLimit(1)
-                .minimumScaleFactor(0.85)
+            CaptionText(window: window, now: now)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -694,11 +711,11 @@ struct AllPlansSmall: View {
     private func layout(captions: Bool) -> some View {
         let palette = Palette(scheme: scheme)
         let note = entry.freshnessNote != nil
-        let size = titleSize(warningIcon: !captions)
+        let fit = titleFit(warningIcon: !captions)
         let long = longCaptions()
         return VStack(alignment: .leading, spacing: note ? 4 : 6) {
             ForEach(entry.plans) { plan in
-                row(plan, captions: captions, titleSize: size, long: long, palette: palette)
+                row(plan, captions: captions, titleSize: fit.size, left: fit.left, long: long, palette: palette)
             }
             Spacer(minLength: 0)
             if note {
@@ -708,13 +725,14 @@ struct AllPlansSmall: View {
     }
 
     @ViewBuilder
-    private func row(_ plan: Plan, captions: Bool, titleSize: CGFloat, long: Bool, palette: Palette) -> some View {
+    private func row(_ plan: Plan, captions: Bool, titleSize: CGFloat, left: Bool, long: Bool,
+                     palette: Palette) -> some View {
         if let window = plan.firstToRunOut(now: entry.date) {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: 3) {
                     PlanTitle(plan: plan, size: titleSize, warningIcon: !captions)
                     Spacer(minLength: 2)
-                    PercentLeft(window: window, now: entry.date, size: 12, left: true, icons: false)
+                    PercentLeft(window: window, now: entry.date, size: 12, left: left, icons: false)
                 }
                 MeterBar(left: window.leftPct, level: window.status, dim: window.isOld(now: entry.date))
                 if captions {
@@ -775,16 +793,18 @@ struct AllPlansSmall: View {
         }
     }
 
-    /// 12-point titles unless one of them doesn't fit beside "100% left"; then all a size smaller.
-    private func titleSize(warningIcon: Bool) -> CGFloat {
-        let percent = percentWidth(size: 12, left: true)
-        for size in [12, 11] as [CGFloat] {
-            let fits = entry.plans.allSatisfy {
-                PlanTitle.width($0, size: size, warningIcon: warningIcon) + 5 + percent <= width
+    /// 12-point titles beside "100% left" unless one of them doesn't fit; then all a size smaller, then
+    /// the percents without " left" (a problem's triangle beside "Antigravity" needs that), then 10 points.
+    private func titleFit(warningIcon: Bool) -> (size: CGFloat, left: Bool) {
+        let steps: [(CGFloat, Bool)] = [(12, true), (11, true), (12, false), (11, false)]
+        for (size, left) in steps {
+            // The row's spacing: 3 on each side of a spacer of at least 2.
+            let percent = percentWidth(size: 12, left: left) + 8
+            if entry.plans.allSatisfy({ PlanTitle.width($0, size: size, warningIcon: warningIcon) + percent <= width }) {
+                return (size, left)
             }
-            if fits { return size }
         }
-        return 10
+        return (10, false)
     }
 }
 
@@ -841,9 +861,12 @@ struct SinglePlanSmall: View {
     }
 
     private func header(_ palette: Palette) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 4) {
+        // "% left" over the percents, when it fits beside the name and a problem's triangle (the
+        // spacing around the spacer takes 12).
+        let label = plan.hasGroups && PlanTitle.width(plan, size: 12) + 12 + textWidth("% left", size: 9) <= width
+        return HStack(alignment: .firstTextBaseline, spacing: 4) {
             PlanTitle(plan: plan, full: true, size: 12)
-            if plan.hasGroups {
+            if label {
                 Spacer(minLength: 4)
                 Text("% left").font(.system(size: 9)).foregroundStyle(palette.muted).fixedSize()
             }
@@ -1019,16 +1042,23 @@ struct AllPlansLarge: View {
     var body: some View {
         // A Mac's large widget has about 308 points of height inside its margins, which the table with
         // reset times, two lines of reader problems and the totals can overrun. Then the problems take
-        // one line, then the totals go (the totals widget has them), then the reset times.
+        // one line, the extra large's totals lose their hints, then the totals go (the totals widget has
+        // them), then the reset times.
         ViewThatFits(in: .vertical) {
-            layout(warningLines: family == .systemExtraLarge ? 1 : 2, totals: true, captions: true)
-            layout(warningLines: 1, totals: true, captions: true)
-            layout(warningLines: 1, totals: false, captions: true)
-            layout(warningLines: 1, totals: false, captions: false)
+            if family == .systemExtraLarge {
+                layout(warningLines: 1, totals: .full, captions: true)
+            } else {
+                layout(warningLines: 2, totals: .compact, captions: true)
+            }
+            layout(warningLines: 1, totals: .compact, captions: true)
+            layout(warningLines: 1, totals: nil, captions: true)
+            layout(warningLines: 1, totals: nil, captions: false)
         }
     }
 
-    private func layout(warningLines: Int, totals: Bool, captions: Bool) -> some View {
+    private enum Totals { case full, compact }
+
+    private func layout(warningLines: Int, totals: Totals?, captions: Bool) -> some View {
         let wide = family == .systemExtraLarge
         let width = measured?.width ?? PreviewSize.content(family).width
         return VStack(alignment: .leading, spacing: 0) {
@@ -1039,8 +1069,8 @@ struct AllPlansLarge: View {
                 WarningLines(plans: entry.plans, width: width, lines: warningLines)
             }
             Spacer(minLength: 8)
-            if totals, let summary = entry.summary {
-                TotalsSection(summary: summary, compact: !wide)
+            if let totals, let summary = entry.summary {
+                TotalsSection(summary: summary, compact: totals == .compact)
             }
         }
     }
