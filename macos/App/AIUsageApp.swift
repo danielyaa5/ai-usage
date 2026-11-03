@@ -37,6 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { @MainActor in exit(await CommandLineMode.run(model: self.model)) }
             return
         }
+        RefreshUsageIntent.inApp = { [weak self] in self?.model.refresh() }
         model.start()
         LoginItem.registerOnFirstLaunch()
         // First run: ask for the dashboard address.

@@ -20,7 +20,13 @@ struct RefreshUsageIntent: AppIntent {
     static let openAppWhenRun = false
     static let isDiscoverable = false
 
+    /// Set by the app. The same buttons show in the app's own windows (the settings preview and the
+    /// menu bar panel), where the intent runs in the app: there the app reads again itself, so what it
+    /// shows updates and its recorded failures clear. In the widget extension this stays nil.
+    @MainActor static var inApp: (@MainActor () -> Void)?
+
     func perform() async throws -> some IntentResult {
+        if await Self.refreshInApp() { return .result() }
         // macOS doesn't redraw a widget while its button's intent runs, so this returns at once. The
         // request makes the timelines macOS reloads next read the dashboard rather than reuse the
         // shared reading; the reads below redraw every widget again when they finish.
@@ -34,5 +40,11 @@ struct RefreshUsageIntent: AppIntent {
             WidgetCenter.shared.reloadAllTimelines()
         }
         return .result()
+    }
+
+    @MainActor private static func refreshInApp() -> Bool {
+        guard let inApp else { return false }
+        inApp()
+        return true
     }
 }
