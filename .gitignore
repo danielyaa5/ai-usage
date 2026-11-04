@@ -12,3 +12,7 @@ macos/AIUsage.xcodeproj/
 macos/build.noindex/
 macos/.build/
 macos/.swiftpm/
+
+# The App Store test app: generated project and builds (see macos/StoreTest/README.md)
+macos/StoreTest/AIUsageStoreTest.xcodeproj/
+macos/StoreTest/build.noindex/

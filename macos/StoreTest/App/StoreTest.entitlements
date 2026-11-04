@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- What a Mac App Store version would have. scripts/sign.sh fills in the App Group. -->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<!-- The dashboard checks, and the bundled Codex's own requests (it inherits this sandbox). -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<!-- The test listener and proxy on 127.0.0.1, and Codex's sign-in callback server. -->
+	<key>com.apple.security.network.server</key>
+	<true/>
+	<!-- ~/.claude and ~/.codex, read only, chosen in an Open panel and kept as bookmarks. -->
+	<key>com.apple.security.files.user-selected.read-only</key>
+	<true/>
+	<key>com.apple.security.files.bookmarks.app-scope</key>
+	<true/>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>$(AI_USAGE_APP_GROUP)</string>
+	</array>
+</dict>
+</plist>

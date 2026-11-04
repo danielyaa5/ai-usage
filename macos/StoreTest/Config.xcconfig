@@ -1,0 +1,11 @@
+// Build settings for the App Store test app. It reads the same git-ignored Local.xcconfig as the
+// widget app (macos/Local.xcconfig) for your bundle ID prefix:
+//
+//   AI_USAGE_BUNDLE_PREFIX = com.example.you
+//
+// No team ID is needed to build: scripts/sign.sh adds the team-prefixed App Group when it signs, and
+// the app and the widget read the group from their own signatures.
+
+AI_USAGE_BUNDLE_PREFIX = org.example
+
+#include? "../Local.xcconfig"

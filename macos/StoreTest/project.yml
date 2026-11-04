@@ -1,0 +1,58 @@
+# XcodeGen spec for the App Store test build (see README.md). `xcodegen generate` in this folder
+# writes AIUsageStoreTest.xcodeproj, which git ignores. scripts/build.sh does that and builds it.
+name: AIUsageStoreTest
+options:
+  createIntermediateGroups: true
+  deploymentTarget:
+    macOS: "14.0"
+
+configFiles:
+  Debug: Config.xcconfig
+  Release: Config.xcconfig
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_HARDENED_RUNTIME: YES
+    DEAD_CODE_STRIPPING: YES
+
+targets:
+  AIUsageStoreTest:
+    type: application
+    platform: macOS
+    sources:
+      - path: App
+        excludes:
+          - Info.plist
+      - path: Shared
+    dependencies:
+      - target: StoreTestWidget
+        embed: true
+    settings:
+      base:
+        PRODUCT_NAME: AI Usage Store Test
+        PRODUCT_BUNDLE_IDENTIFIER: $(AI_USAGE_BUNDLE_PREFIX).AIUsageStoreTest
+        INFOPLIST_FILE: App/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGN_ENTITLEMENTS: App/StoreTest.entitlements
+    scheme: {}
+
+  StoreTestWidget:
+    type: app-extension
+    platform: macOS
+    sources:
+      - path: Widget
+        excludes:
+          - Info.plist
+      - path: Shared
+    settings:
+      base:
+        PRODUCT_NAME: StoreTestWidget
+        PRODUCT_BUNDLE_IDENTIFIER: $(AI_USAGE_BUNDLE_PREFIX).AIUsageStoreTest.Widget
+        INFOPLIST_FILE: Widget/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGN_ENTITLEMENTS: Widget/StoreTestWidget.entitlements
+        SKIP_INSTALL: YES
