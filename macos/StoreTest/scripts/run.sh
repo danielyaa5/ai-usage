@@ -303,8 +303,12 @@ restore_status_line() {
     else
       echo "Your status line setting is back as it was. Claude Code changed other settings meanwhile; those are kept."
     fi
+    # Done, so a stop from here on only has to finish deleting the backup, not restore from half of it.
+    SWITCHED=0
+    BACKUP_PENDING=1
     rm -rf "$BACKUP_DIR"
     rmdir "$KIT/settings-backup" 2>/dev/null || true
+    BACKUP_PENDING=0
   else
     BACKUP_PENDING=0   # kept on purpose: the warning points to it
     echo "WARNING: couldn't put your status line back in $SETTINGS."
@@ -502,7 +506,10 @@ else
             if ( IFS= read -r -t 5 _ </dev/tty ); then break; fi
             WAITED=$((WAITED + 5))
           done
-          NOW=$(state_value claude)   # a reading can arrive while Enter is pressed
+          # A reading can arrive while Enter is pressed. A request that fails now (the app quit) mustn't
+          # undo one the loop already saw.
+          LATEST=$(state_value claude)
+          [ "${LATEST:-0}" -gt "${NOW:-0}" ] 2>/dev/null && NOW=$LATEST
           if [ "${NOW:-0}" -le "${BEFORE:-0}" ]; then
             note statusline.claude 4 "Readings from Claude Code's status line" failed "No reading arrived (waited $WAITED s)."
           fi

@@ -55,7 +55,10 @@ function run(argv) {
     return 'ok';
   }
   if (mode === 'restore') {
-    const old = JSON.parse(readText(argv[2]));
+    // A missing OLDFILE must not read as "no statusLine before", which would delete the setting.
+    const oldText = readText(argv[2]);
+    if (oldText === null) throw new Error('Could not read ' + argv[2]);
+    const old = JSON.parse(oldText);
     if (old === null) {
       delete settings.statusLine;
     } else {
