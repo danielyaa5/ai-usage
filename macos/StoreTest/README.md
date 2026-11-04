@@ -6,7 +6,7 @@ Sandbox, the way a store app would.
 
 1. **ChatGPT limits through the bundled Codex.** OpenAI's `codex-app-server` (from a Codex release,
    checked against its SHA-256 and OpenAI's signature) sits next to the app's executable and runs in
-   the app's sandbox. The app signs in with ChatGPT in a browser window
+   the app's sandbox. The app signs in with ChatGPT in a private browser window
    (`ASWebAuthenticationSession`, with Codex's own login server on 127.0.0.1 taking the callback),
    reads the limits with `account/rateLimits/read`, and watches for a minute which servers Codex
    contacts. Codex's proxy variables point at a logging proxy in the app, which notes each host and

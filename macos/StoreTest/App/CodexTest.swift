@@ -47,6 +47,11 @@ enum CodexHelper {
             "cli_auth_credentials_store = \"file\"",
             "forced_login_method = \"chatgpt\"",
             "check_for_update_on_startup = false",
+            // Codex looks for project settings (.codex/config.toml) in every folder from its working
+            // folder up to the nearest .git. With no markers it looks only in its working folder (in
+            // the container), never in your home folder, where the sandbox would refuse the read and
+            // Codex would stop.
+            "project_root_markers = []",
         ]
         if let modelCatalog {
             lines.append("model_catalog_json = \(tomlString(modelCatalog.path))")
@@ -488,12 +493,10 @@ extension TestModel {
         let run = CodexRun(label: label)
         codexRuns.append(run)
         codexStage.value = proxyPort == nil ? "direct" : "startup"
-        // Codex looks for project settings (.codex/config.toml) from its working folder up to the
-        // nearest .git. Starting it in / keeps that walk out of your home folder, where the sandbox
-        // would refuse the read and Codex would stop.
+        // Its working folder has to be the app's own: in a folder outside the container (/private/tmp,
+        // say) the sandboxed Codex stops at startup.
         let client = CodexClient(executable: executable, arguments: CodexHelper.arguments,
-                                 environment: CodexHelper.environment(home: home, proxyPort: proxyPort),
-                                 directory: URL(fileURLWithPath: "/", isDirectory: true))
+                                 environment: CodexHelper.environment(home: home, proxyPort: proxyPort), directory: home)
         client.onStderr = { [weak self] line in
             Task { @MainActor in self?.takeStderr(line, run: run) }
         }
@@ -594,6 +597,14 @@ extension TestModel {
                         facts: ["keys": reply.keys.sorted().joined(separator: ", ")])
             return false
         }
+        // Only ever show OpenAI's own sign-in page.
+        guard authURL.scheme == "https", authURL.host == "auth.openai.com", authURL.user == nil,
+              authURL.port == nil || authURL.port == 443 else {
+            results.set("codex.login", test: 1, title, .failed,
+                        "Codex's sign-in address isn't OpenAI's (\(authURL.scheme ?? "?")://\(authURL.host ?? "?")), so the test didn't open it.")
+            _ = try? await client.request("account/login/cancel", params: ["loginId": reply["loginId"] as? String ?? ""], timeout: 10)
+            return false
+        }
         var facts: [String: String] = ["signInHost": authURL.host ?? "?"]
         let query = URLComponents(url: authURL, resolvingAgainstBaseURL: false)?.queryItems ?? []
         if let redirect = query.first(where: { $0.name == "redirect_uri" })?.value {
@@ -616,7 +627,7 @@ extension TestModel {
         } ?? false
         facts["window"] = opened ? "opened" : (anchor == nil ? "no app window to attach it to" : "didn't open")
         results.set("codex.login", test: 1, title, .running, opened ? "Waiting for you to sign in." : "The sign-in window didn't open.")
-        codexStatus = opened ? "Sign in with ChatGPT in the window that opened. If it asks to use auth.openai.com, click Continue." :
+        codexStatus = opened ? "Sign in with ChatGPT in the window that opened. It's a private browser window, so it starts signed out." :
             "The sign-in window didn't open. Use the link below to sign in in your browser."
         // Codex's login server waits ten minutes. The browser link below works all that time, also
         // after the window closes, so the test waits as long, unless you click Stop.

@@ -38,8 +38,10 @@ final class WebLogin: NSObject, ASWebAuthenticationPresentationContextProviding 
             }
         }
         session.presentationContextProvider = self
-        // Share the browser's cookies, so someone already signed in to ChatGPT there only confirms.
-        session.prefersEphemeralWebBrowserSession = false
+        // A private session: after the sign-in, Codex's login server sends the browser to a local page
+        // whose address carries the new ID token, and that address shouldn't land in the browser's
+        // history (or its synced history). It also keeps the browser's ChatGPT cookies out of it.
+        session.prefersEphemeralWebBrowserSession = true
         self.session = session
         cancelledByApp = false
         return session.start()
