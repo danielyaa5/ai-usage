@@ -1,6 +1,6 @@
 #!/bin/bash
-# Runs the AI Usage store test on this Mac (see README.md). In a kit folder made by build.sh and
-# signed by sign.sh:
+# Runs the AI Usage store test on this Mac (see README.md). In a kit folder made by build.sh (it
+# runs sign.sh first when the builds aren't signed yet):
 #
 #   ./run.sh [DASHBOARD_URL]
 #
@@ -261,6 +261,17 @@ umask 077
 printf 'PORT=%s\nTOKEN=%s\n' "$PORT" "$TOKEN" > "$STATE"
 umask 022
 { sw_vers; uname -m; echo "port $PORT"; cat "$KIT/BUILD-INFO.txt" 2>/dev/null; } > "$OUT/system.txt"
+
+if [ ! -f "$KIT/signed-1.zip" ] || [ ! -f "$KIT/signed-2.zip" ] ||
+   [ "$KIT/unsigned-1.zip" -nt "$KIT/signed-1.zip" ] || [ "$KIT/unsigned-2.zip" -nt "$KIT/signed-2.zip" ]; then
+  say "Signing the two builds"
+  echo "With your Apple Development certificate. If macOS asks to let codesign use a key in your"
+  echo "keychain, enter your password and click Always Allow (or Allow, once for each build)."
+  if ! "$KIT/sign.sh"; then
+    echo "Signing failed (see above), so the test stopped."
+    exit 1
+  fi
+fi
 
 say "Installing build 1"
 install_build 1

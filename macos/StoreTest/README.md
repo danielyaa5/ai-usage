@@ -50,9 +50,12 @@ Copy the `kit` folder to the Mac you'll test on, then in Terminal there (not ove
 `codesign` usually can't use the login keychain):
 
 ```sh
-./sign.sh        # with your Apple Development certificate; DEVELOPMENT_TEAM picks one of several
 ./run.sh         # or ./run.sh http://my-mac.local:8796/api/widget for the local network checks
 ```
+
+`run.sh` first runs `sign.sh` when the builds aren't signed yet, which signs them with your Apple
+Development certificate. With certificates from more than one team, put `DEVELOPMENT_TEAM=<team ID>`
+in a `local.env` file in the kit (it can also hold `LAN_URL=` for the network checks).
 
 `run.sh` takes about ten minutes and asks before each step that needs you. It installs
 `/Applications/AI Usage Store Test.app`, and, only if you agree, switches the `statusLine` setting in

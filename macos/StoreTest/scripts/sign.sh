@@ -4,9 +4,11 @@
 #
 #   ./sign.sh        # unsigned-1.zip, unsigned-2.zip -> signed-1.zip, signed-2.zip
 #
-# Uses SIGN_IDENTITY (a certificate name or SHA-1) and DEVELOPMENT_TEAM when set, and otherwise your
-# only Apple Development certificate. Run it in your login session (Terminal, or a LaunchAgent in
-# gui/<uid>): over SSH, codesign usually can't use the login keychain (errSecInternalComponent).
+# run.sh calls it when the builds haven't been signed yet. It uses SIGN_IDENTITY (a certificate name
+# or SHA-1) or DEVELOPMENT_TEAM when set, in the environment or in a local.env file next to it, and
+# otherwise your only Apple Development certificate. Run it in your login session (Terminal, or a
+# LaunchAgent in gui/<uid>): over SSH, codesign usually can't use the login keychain
+# (errSecInternalComponent).
 #
 # The Codex helper gets exactly the two entitlements a helper tool in a sandboxed app may have,
 # app-sandbox and inherit. Build 1 signs it without the hardened runtime and build 2 with it, so the
@@ -15,6 +17,8 @@
 set -euo pipefail
 KIT=$(cd "$(dirname "$0")" && pwd)
 cd "$KIT"
+# This Mac's own settings, kept out of the repo.
+if [ -f "$KIT/local.env" ]; then . "$KIT/local.env"; fi
 APP_NAME="AI Usage Store Test.app"
 HELPER_NAME=codex-app-server
 
@@ -30,14 +34,26 @@ cert_team() {  # cert_team SHA1 -> the team (OU) of that certificate in your key
 IDENTITY=${SIGN_IDENTITY:-}
 TEAM=${DEVELOPMENT_TEAM:-}
 if [ -z "$IDENTITY" ]; then
+  FOUND_TEAM=""
+  TEAMS=""
   for hash in $(security find-identity -v -p codesigning | awk '/"Apple Development: / { print $2 }'); do
     team=$(cert_team "$hash")
     if [ -z "$TEAM" ] || [ "$team" = "$TEAM" ]; then
-      IDENTITY=$hash
-      TEAM=$team
-      break
+      if [ -z "$IDENTITY" ]; then
+        IDENTITY=$hash
+        FOUND_TEAM=$team
+      fi
+      case " $TEAMS " in *" $team "*) ;; *) TEAMS="$TEAMS $team" ;; esac
     fi
   done
+  # Certificates from several teams: don't guess whose to sign with.
+  if [ -z "$TEAM" ] && [ "$(printf '%s' "$TEAMS" | wc -w | tr -d ' ')" -gt 1 ]; then
+    echo "Apple Development certificates from more than one team can sign here. Put the one to use in" >&2
+    echo "$KIT/local.env as DEVELOPMENT_TEAM=<team ID>. These are the certificates:" >&2
+    security find-identity -v -p codesigning | grep '"Apple Development: ' >&2
+    exit 1
+  fi
+  TEAM=${TEAM:-$FOUND_TEAM}
 fi
 if [ -z "$IDENTITY" ]; then
   echo "No Apple Development certificate found. These can sign code:" >&2
