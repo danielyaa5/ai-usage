@@ -22,13 +22,15 @@ if [ -f "$KIT/local.env" ]; then . "$KIT/local.env"; fi
 APP_NAME="AI Usage Store Test.app"
 HELPER_NAME=codex-app-server
 
-cert_team() {  # cert_team SHA1 -> the team (OU) of that certificate in your keychains
+cert_team() {  # cert_team SHA1 -> the team (OU) of that certificate in your keychains, or nothing
+  # awk reads to the end rather than exiting at the match: an early exit leaves security writing to a
+  # closed pipe, and its SIGPIPE ends the whole script through pipefail and set -e, with no message.
   security find-certificate -a -Z -p | awk -v hash="$1" '
-    /^SHA-1 hash:/ { keep = ($3 == hash) }
+    /^SHA-1 hash:/ { keep = (!done && $3 == hash) }
     keep && /BEGIN CERTIFICATE/ { printing = 1 }
     printing { print }
-    /END CERTIFICATE/ { if (printing) exit; printing = 0 }' |
-    openssl x509 -noout -subject 2>/dev/null | sed -n 's/.*OU *= *\([A-Z0-9]*\).*/\1/p'
+    /END CERTIFICATE/ { if (printing) done = 1; printing = 0 }' |
+    openssl x509 -noout -subject 2>/dev/null | sed -n 's/.*OU *= *\([A-Z0-9]*\).*/\1/p' || true
 }
 
 IDENTITY=${SIGN_IDENTITY:-}
@@ -92,7 +94,9 @@ for n in 1 2; do
   codesign --verify --deep --strict "$APP"
 
   echo "Build $n ($(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Contents/Info.plist")), App Group $GROUP:"
-  codesign -d --verbose=1 "$HELPER" 2>&1 | grep -E '^(Identifier|CodeDirectory|TeamIdentifier)=' | sed 's/^/  helper: /'
+  # CodeDirectory's flags show the runtime flag (build 2) or 0x0 (build 1).
+  codesign -d --verbose=1 "$HELPER" 2>&1 | grep -E '^(Identifier=|CodeDirectory |TeamIdentifier=|Runtime Version=)' |
+    sed 's/^/  helper: /' || true
   codesign -d --entitlements - --xml "$HELPER" 2>/dev/null | tr -d '\n\t' | sed 's/^/  helper entitlements: /'
   echo
   rm -f "signed-$n.zip"
