@@ -304,8 +304,9 @@ restore_status_line() {
       echo "Your status line setting is back as it was. Claude Code changed other settings meanwhile; those are kept."
     fi
     # Done, so a stop from here on only has to finish deleting the backup, not restore from half of it.
-    SWITCHED=0
+    # BACKUP_PENDING goes first: a stop between the two still restores from the whole backup.
     BACKUP_PENDING=1
+    SWITCHED=0
     rm -rf "$BACKUP_DIR"
     rmdir "$KIT/settings-backup" 2>/dev/null || true
     BACKUP_PENDING=0
