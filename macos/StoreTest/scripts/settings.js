@@ -3,7 +3,9 @@
 //
 //   osascript -l JavaScript settings.js command FILE          -> the current statusLine command, or nothing
 //   osascript -l JavaScript settings.js get FILE              -> the statusLine value as JSON ("null" if unset)
-//   osascript -l JavaScript settings.js set FILE COMMANDFILE  -> statusLine.command = COMMANDFILE's text
+//   osascript -l JavaScript settings.js set FILE COMMANDFILE [COPYFILE]
+//                                       -> statusLine.command = COMMANDFILE's text; COPYFILE gets the new
+//                                          text first, so it exists whenever FILE has changed
 //   osascript -l JavaScript settings.js restore FILE OLDFILE  -> statusLine = OLDFILE's JSON (null removes it)
 ObjC.import('Foundation');
 
@@ -47,7 +49,9 @@ function run(argv) {
     if (command === null || command.length === 0) throw new Error('No command in ' + argv[2]);
     const kept = (current && typeof current === 'object') ? current : {};
     settings.statusLine = Object.assign({}, kept, { type: 'command', command: command });
-    save(path, settings);
+    const text = JSON.stringify(settings, null, 2) + '\n';
+    if (argv[3]) writeText(argv[3], text);
+    writeText(path, text);
     return 'ok';
   }
   if (mode === 'restore') {

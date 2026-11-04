@@ -24,8 +24,8 @@ KIT=$(cd "$(dirname "$0")" && pwd)
 APP_NAME="AI Usage Store Test"
 APP="/Applications/$APP_NAME.app"
 HELPER="$APP/Contents/MacOS/codex-app-server"
-# macOS keeps only the first 16 characters of a process name, so the app is found by its executable's
-# path: pgrep -x "AI Usage Store Test" would never match.
+# The app is found by its executable's path, so only the copy in /Applications counts, not one
+# running from a build folder.
 APP_PATTERN="^$APP/Contents/MacOS/$APP_NAME( |\$)"
 LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 CLAUDE_DIR=${CLAUDE_CONFIG_DIR:-$HOME/.claude}
@@ -44,9 +44,12 @@ LOG_START=$(date '+%Y-%m-%d %H:%M:%S')
 
 say() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 
-ask() {  # ask QUESTION y|n -> status 0 for yes
-  local reply hint="[y/N]"
+# With no default (""), an empty line asks again, so an Enter pressed earlier can't answer the question.
+# bash 3.2 can't throw away what was typed ahead (read -t takes whole seconds, and -t 0 waits).
+ask() {  # ask QUESTION y|n|"" -> status 0 for yes
+  local reply hint="[y/n]"
   [ "$2" = y ] && hint="[Y/n]"
+  [ "$2" = n ] && hint="[y/N]"
   while true; do
     printf '%s %s ' "$1" "$hint"
     if ! IFS= read -r reply </dev/tty; then
@@ -99,7 +102,7 @@ quit_app() {
 }
 
 install_build() {  # install_build 1|2
-  local zip="$KIT/signed-$1.zip" existing
+  local zip="$KIT/signed-$1.zip" existing work
   [ -f "$zip" ] || { echo "Missing $zip: run sign.sh first."; exit 1; }
   quit_app
   if [ -d "$APP" ]; then
@@ -108,9 +111,29 @@ install_build() {  # install_build 1|2
       *.AIUsageStoreTest) ;;
       *) echo "$APP belongs to another app ($existing); not replacing it."; exit 1 ;;
     esac
-    rm -rf "$APP"
   fi
-  ditto --noqtn -x -k "$zip" /Applications || { echo "Couldn't install into /Applications."; exit 1; }
+  # Unpacked next to this script and swapped in by renaming, so a stopped run can't leave half an app
+  # in /Applications.
+  mkdir -p "$KIT/work.noindex"
+  rm -rf "$KIT"/work.noindex/install.*
+  work=$(mktemp -d "$KIT/work.noindex/install.XXXXXX") || { echo "Couldn't unpack build $1."; exit 1; }
+  if ! ditto --noqtn -x -k "$zip" "$work" || [ ! -d "$work/$APP_NAME.app" ]; then
+    echo "Couldn't unpack build $1."
+    rm -rf "$work"
+    exit 1
+  fi
+  if [ -d "$APP" ] && ! mv "$APP" "$work/old.app"; then
+    echo "Couldn't move the installed test app aside. If macOS said Terminal was prevented from"
+    echo "modifying apps, allow Terminal in System Settings > Privacy & Security > App Management."
+    rm -rf "$work"
+    exit 1
+  fi
+  if ! mv "$work/$APP_NAME.app" "$APP"; then
+    echo "Couldn't install into /Applications."
+    rm -rf "$work"
+    exit 1
+  fi
+  rm -rf "$work"
   xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
   touch "$APP"
   "$LSREGISTER" -f "$APP"
@@ -197,6 +220,7 @@ sampler() {
 # Step 4 switches statusLine in your Claude Code settings for a minute. The backup goes in a private
 # folder next to this script, not in results/, and is deleted once your settings are checked back.
 SWITCHED=0          # 1 from just before the switch until the settings are checked back
+BACKUP_PENDING=0    # 1 while a backup exists that no switch has taken over yet: the cleanup deletes it
 SETTINGS_FILE=""    # settings.json with a symlink resolved, so the link itself is kept
 SETTINGS_EXISTED=0
 SETTINGS_MODE=""
@@ -225,6 +249,7 @@ back_up_settings() {  # back_up_settings SNIPPET -> status 0 when the backup is 
     return 1
   fi
   BACKUP_DIR="$KIT/settings-backup/$STAMP"
+  BACKUP_PENDING=1
   if ! (umask 077 && mkdir -p "$BACKUP_DIR"); then
     SKIP_REASON="Couldn't make the backup folder $BACKUP_DIR."
     return 1
@@ -281,6 +306,7 @@ restore_status_line() {
     rm -rf "$BACKUP_DIR"
     rmdir "$KIT/settings-backup" 2>/dev/null || true
   else
+    BACKUP_PENDING=0   # kept on purpose: the warning points to it
     echo "WARNING: couldn't put your status line back in $SETTINGS."
     if [ "$SETTINGS_EXISTED" = 1 ]; then
       echo "Your original settings file is at $original"
@@ -307,6 +333,11 @@ cleanup() {
   trap '' INT TERM HUP PIPE   # a second Ctrl-C can't cut the cleanup short
   [ -n "${SAMPLER:-}" ] && kill "$SAMPLER" 2>/dev/null
   restore_status_line
+  # A backup made for a switch that never started holds a whole copy of settings.json: don't leave it.
+  if [ "$BACKUP_PENDING" = 1 ]; then
+    rm -rf "$BACKUP_DIR"
+    rmdir "$KIT/settings-backup" 2>/dev/null || true
+  fi
   quit_app
   if [ "$INSTALLED" = 1 ] && [ "$SIGNED_OUT" = 0 ]; then
     echo "The test stopped before its last step, where it signs out of ChatGPT, so its own sign-in may"
@@ -400,7 +431,8 @@ echo "Work through steps 1 to 3 in the app window, then click Continue in Termin
 echo "(Or press Enter here to move on.)"
 while app_running; do
   [ "$(state_value handoff)" = 1 ] && break
-  if IFS= read -r -t 5 _ </dev/tty; then break; fi
+  # In a subshell: on bash 3.2, a Ctrl-C during read -t can leave its alarm set to go off in the cleanup.
+  if ( IFS= read -r -t 5 _ </dev/tty ); then break; fi
   save first
 done
 save first
@@ -442,15 +474,16 @@ else
     if ! is_snippet "$SNIPPET"; then
       echo "The app didn't build the snippet; skipping."
       note statusline.switch 4 "Status line switched for the test" failed "The app didn't build the snippet."
-    elif ask "Switch your Claude Code status line to the test snippet now? Your settings are backed up first and put back right after." y; then
+    elif ask "Switch your Claude Code status line to the test snippet now? Your settings are backed up first and put back right after." ""; then
       if ! back_up_settings "$SNIPPET"; then
         echo "$SKIP_REASON So the switch is skipped, and your settings weren't touched."
         note statusline.switch 4 "Status line switched for the test" skipped "$SKIP_REASON"
       else
         SWITCHED=1
-        if osascript -l JavaScript "$KIT/settings.js" set "$SETTINGS_FILE" "$BACKUP_DIR/snippet.txt" >/dev/null 2>>"$OUT/runner-errors.txt"; then
+        BACKUP_PENDING=0
+        # settings.js writes settings.json.written, the exact copy, before it changes settings.json.
+        if osascript -l JavaScript "$KIT/settings.js" set "$SETTINGS_FILE" "$BACKUP_DIR/snippet.txt" "$BACKUP_DIR/settings.json.written" >/dev/null 2>>"$OUT/runner-errors.txt"; then
           [ -n "$SETTINGS_MODE" ] && chmod "$SETTINGS_MODE" "$SETTINGS_FILE"
-          cp -p "$SETTINGS_FILE" "$BACKUP_DIR/settings.json.written"
           echo
           echo "Done. Now start a new Claude Code session in another Terminal tab (cd ~ && claude, and say"
           echo "yes if it asks whether you trust the folder), send a short message such as \"hi\" and wait for"
@@ -466,19 +499,20 @@ else
               sleep 3
               break
             fi
-            if IFS= read -r -t 5 _ </dev/tty; then break; fi
+            if ( IFS= read -r -t 5 _ </dev/tty ); then break; fi
             WAITED=$((WAITED + 5))
           done
+          NOW=$(state_value claude)   # a reading can arrive while Enter is pressed
           if [ "${NOW:-0}" -le "${BEFORE:-0}" ]; then
             note statusline.claude 4 "Readings from Claude Code's status line" failed "No reading arrived (waited $WAITED s)."
           fi
           save first
-          if ask "Did your status line look the same as before?" y; then
+          if ask "Did your status line look the same as before?" ""; then
             note statusline.looks-same 4 "Your status line looked the same" passed "You said yes."
           else
             note statusline.looks-same 4 "Your status line looked the same" failed "You said no."
           fi
-          if ask "Did anything ask you for permission (macOS or Claude Code)?" n; then
+          if ask "Did anything ask you for permission (macOS or Claude Code)?" ""; then
             note statusline.prompts 4 "No prompts during the hand-off" failed "You saw a prompt."
           else
             note statusline.prompts 4 "No prompts during the hand-off" passed "You saw none."
@@ -531,13 +565,13 @@ SAMPLER=""
 say "Collecting logs"
 /usr/bin/log show --style ndjson --start "$LOG_START" --predicate 'subsystem == "AIUsageStoreTest"' > "$OUT/unified-log.ndjson" 2>/dev/null
 /usr/bin/log show --style compact --start "$LOG_START" \
-  --predicate 'eventMessage CONTAINS[c] "deny" AND (eventMessage CONTAINS "codex-app-server" OR eventMessage CONTAINS "AI Usage Store T" OR eventMessage CONTAINS "StoreTestWidget")' \
-  > "$OUT/sandbox-denials.txt" 2>/dev/null
+  --predicate 'eventMessage CONTAINS[c] "deny" AND (eventMessage CONTAINS "codex-app-serv" OR eventMessage CONTAINS "AI Usage Store" OR eventMessage CONTAINS "StoreTestWidget")' \
+  > "$OUT/sandbox-denials.txt" 2>/dev/null   # the kernel's messages can cut a process name short
 /usr/bin/log show --style compact --start "$LOG_START" --predicate 'process == "nehelper"' 2>/dev/null |
   grep -i 'AIUsageStoreTest\|Store Test\|StoreTestWidget' > "$OUT/local-network.txt"
 mkdir -p "$OUT/crashes"
 find "$HOME/Library/Logs/DiagnosticReports" -maxdepth 1 -newer "$OUT/system.txt" \
-  \( -name 'codex-app-server*' -o -name 'AI Usage Store Test*' -o -name 'StoreTestWidget*' \) \
+  \( -name 'codex-app-serv*' -o -name 'AI Usage Store*' -o -name 'StoreTestWidget*' \) \
   -exec cp {} "$OUT/crashes/" \; 2>/dev/null
 pluginkit -m -v -i "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist").Widget" > "$OUT/pluginkit.txt" 2>&1
 
