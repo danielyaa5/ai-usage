@@ -371,7 +371,7 @@ extension TestModel {
                 limitsRead = await readLimits(client, checkID: "codex.limits", title: "ChatGPT limits read")
             }
         } catch {
-            results.set("codex.account", test: 1, "Signed in with ChatGPT", .failed, Redact.scrub("\(error)"))
+            results.set("codex.account", test: 1, "Signed in with ChatGPT", .failed, Redact.error(error))
         }
         if limitsRead {
             await idle(seconds: 60)
@@ -417,7 +417,7 @@ extension TestModel {
                 limitsRead = await readLimits(client, checkID: id("codex.limits"), title: "ChatGPT limits read after the \(phaseName)")
             }
         } catch {
-            results.set(id("codex.account"), test: 1, "Still signed in after the \(phaseName)", .failed, Redact.scrub("\(error)"))
+            results.set(id("codex.account"), test: 1, "Still signed in after the \(phaseName)", .failed, Redact.error(error))
         }
         if signOutAfter {
             codexStage.value = "logout"
@@ -430,7 +430,7 @@ extension TestModel {
                             facts: ["authFile": CodexHelper.hasSignIn ? "still there" : "gone"])
             } catch {
                 results.set(id("codex.logout"), test: 1, "Signed out at the end of the test", .failed,
-                            "Codex couldn't sign out: \(Redact.scrub("\(error)"))")
+                            "Codex couldn't sign out: \(Redact.error(error))")
             }
         }
         await stopCodex(client, run, checkID: id("codex.stop"), title: "Codex stops cleanly after the \(phaseName)")
@@ -440,11 +440,15 @@ extension TestModel {
         if signOutAfter && !signedOut { removeSignInFile(reason: "Codex couldn't sign out") }
     }
 
-    func openInBrowser(_ url: URL) {
-        NSWorkspace.shared.open(url)
+    /// The way in when the sign-in window doesn't work: the link goes on the clipboard for a private
+    /// browser window, because the page the sign-in ends on carries the new ID token in its address,
+    /// which a normal window would keep in its (synced) history.
+    func copySignInLink(_ url: URL) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(url.absoluteString, forType: .string)
         codexRuns.last?.usedBrowser = true
-        codexStatus = "Sign in with ChatGPT in your browser, then come back here."
-        results.event("Opened the ChatGPT sign-in page in the default browser.")
+        codexStatus = "The sign-in link is on the clipboard. Paste it into a private browser window (in Safari, File > New Private Window), sign in with ChatGPT there, then come back here."
+        results.event("Copied the ChatGPT sign-in link for a private browser window.")
     }
 
     /// Gives up waiting for the sign-in.
@@ -458,7 +462,7 @@ extension TestModel {
     private func startProxy() async -> UInt16? {
         let stage = codexStage
         do {
-            let proxy = try ConnectProxy(stage: { stage.value }) { [weak self] contact in
+            let proxy = try ConnectProxy(allowedHosts: CodexHelper.expectedHosts, stage: { stage.value }) { [weak self] contact in
                 Task { @MainActor in self?.recordContact(contact) }
             }
             let port = await proxy.start { [weak self] problem in
@@ -567,7 +571,7 @@ extension TestModel {
             facts["exit"] = run.exit ?? stopped.description
             facts["lastStderr"] = codexLog.suffix(3).joined(separator: " | ")
             if !run.panics.isEmpty { facts["panic"] = run.panics.joined(separator: " | ") }
-            results.set(checkID, test: 1, title, .failed, "Codex didn't answer: \(Redact.scrub("\(error)")).", facts: facts)
+            results.set(checkID, test: 1, title, .failed, "Codex didn't answer: \(Redact.error(error)).", facts: facts)
             return nil
         }
     }
@@ -589,7 +593,7 @@ extension TestModel {
         do {
             reply = try await client.request("account/login/start", params: ["type": "chatgpt"], timeout: 30)
         } catch {
-            results.set("codex.login", test: 1, title, .failed, "Codex couldn't start the sign-in: \(Redact.scrub("\(error)"))")
+            results.set("codex.login", test: 1, title, .failed, "Codex couldn't start the sign-in: \(Redact.error(error))")
             return false
         }
         guard let text = reply["authUrl"] as? String, let authURL = URL(string: text) else {
@@ -628,15 +632,15 @@ extension TestModel {
         facts["window"] = opened ? "opened" : (anchor == nil ? "no app window to attach it to" : "didn't open")
         results.set("codex.login", test: 1, title, .running, opened ? "Waiting for you to sign in." : "The sign-in window didn't open.")
         codexStatus = opened ? "Sign in with ChatGPT in the window that opened. It's a private browser window, so it starts signed out." :
-            "The sign-in window didn't open. Use the link below to sign in in your browser."
-        // Codex's login server waits ten minutes. The browser link below works all that time, also
+            "The sign-in window didn't open. Copy the sign-in link below into a private browser window."
+        // Codex's login server waits ten minutes. The sign-in link below works all that time, also
         // after the window closes, so the test waits as long, unless you click Stop.
         let deadline = started.addingTimeInterval(600)
         var toldAboutWindow = false
         while run.loginResult == nil, !run.cancelled, Date() < deadline, client.isRunning {
             if run.windowEndedAt != nil, !toldAboutWindow, !run.usedBrowser {
                 toldAboutWindow = true
-                codexStatus = "The sign-in window closed before the sign-in finished. Use the link below to sign in in your browser, or click Stop."
+                codexStatus = "The sign-in window closed before the sign-in finished. Copy the sign-in link below into a private browser window, or click Stop."
             }
             try? await Task.sleep(nanoseconds: 300_000_000)
         }
@@ -692,7 +696,7 @@ extension TestModel {
             results.set(checkID, test: 1, title, reading.windows.isEmpty ? .failed : .passed, reading.summary, facts: reading.facts)
             return !reading.windows.isEmpty
         } catch {
-            results.set(checkID, test: 1, title, .failed, Redact.scrub("\(error)"))
+            results.set(checkID, test: 1, title, .failed, Redact.error(error))
             return false
         }
     }

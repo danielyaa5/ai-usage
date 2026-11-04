@@ -285,7 +285,9 @@ final class TestModel: ObservableObject {
     }
 
     static func facts(_ outcome: URLCheckOutcome) -> [String: String] {
-        var facts = ["url": outcome.url, "ms": "\(outcome.milliseconds)"]
+        // The dashboard on your network is named, not given by its address.
+        var facts = ["url": outcome.name == "lan" ? "the dashboard on your network" : outcome.url,
+                     "ms": "\(outcome.milliseconds)"]
         if let code = outcome.errorCode { facts["error"] = "\(outcome.errorDomain ?? "") \(code)" }
         if outcome.localNetworkDenied { facts["localNetworkDenied"] = "yes" }
         if outcome.blockedByATS { facts["blockedByATS"] = "yes" }

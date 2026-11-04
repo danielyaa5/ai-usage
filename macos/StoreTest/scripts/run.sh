@@ -174,7 +174,8 @@ sampler() {
     if [ -n "$pid" ]; then
       tree=$(ps -axo pid=,ppid=,command= | awk -v root="$pid" '
         { parent[$1] = $2; line[$1] = $0 }
-        END { for (p in line) { q = p; for (i = 0; i < 50 && q != "" && q > 1; i++) { if (q == root) { print line[p]; break } q = parent[q] } } }' | sort -n)
+        END { for (p in line) { q = p; for (i = 0; i < 50 && q != "" && q > 1; i++) { if (q == root) { print line[p]; break } q = parent[q] } } }' |
+        sort -n | sed -e "s/$TOKEN/TOKEN/g" -e 's/--lan-url [^ ]*/--lan-url LAN_URL/')
       if [ "$tree" != "$last_tree" ]; then
         printf '%s\n%s\n\n' "$(date -u +%H:%M:%S)" "$tree" >> "$OUT/processes.txt"
         last_tree=$tree
@@ -292,6 +293,9 @@ restore_status_line() {
 
 is_snippet() { case "$1" in ': ai-usage-v1;'*) return 0 ;; *) return 1 ;; esac; }
 
+INSTALLED=0    # set once build 1 is installed
+SIGNED_OUT=0   # set once the update phase, which signs the test out of ChatGPT, has finished
+
 # A port and token for the app's test listener, kept between runs so a pasted snippet stays valid.
 # They're loaded before the cleanup is set up, so it can quit an app left over from an earlier run.
 STATE="$KIT/state.env"
@@ -304,6 +308,10 @@ cleanup() {
   [ -n "${SAMPLER:-}" ] && kill "$SAMPLER" 2>/dev/null
   restore_status_line
   quit_app
+  if [ "$INSTALLED" = 1 ] && [ "$SIGNED_OUT" = 0 ]; then
+    echo "The test stopped before its last step, where it signs out of ChatGPT, so its own sign-in may"
+    echo "still be in the app's container. Deleting the app's containers (see README.md) removes it."
+  fi
 }
 trap cleanup EXIT
 trap 'exit 130' INT TERM
@@ -348,7 +356,12 @@ your local network and a test widget, picking your .claude and .codex folders, s
 to ChatGPT through the bundled Codex, and your Claude Code status line. About ten minutes.
 Results go to $OUT
 EOF
-[ -n "$LAN_URL" ] && echo "Dashboard on your network: $LAN_URL" || echo "No dashboard address given, so the network check is skipped."
+if [ -n "$LAN_URL" ]; then
+  printf 'Dashboard on your network: %s\n' "$LAN_URL" >/dev/tty
+  echo "A dashboard address on your network was given."
+else
+  echo "No dashboard address given, so the network check is skipped."
+fi
 ask "Start?" y || exit 0
 
 quit_app
@@ -377,6 +390,7 @@ fi
 
 say "Installing build 1"
 install_build 1
+INSTALLED=1
 sampler &
 SAMPLER=$!
 
@@ -507,6 +521,7 @@ if launch update; then
     [ "$(state_value done)" = 1 ] && break
     sleep 3
   done
+  [ "$(state_value done)" = 1 ] && SIGNED_OUT=1
   save update
 fi
 quit_app

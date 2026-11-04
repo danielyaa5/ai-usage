@@ -112,8 +112,8 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             if let url = model.browserFallbackURL {
-                Button("No sign-in window? Open the page in your browser instead") {
-                    model.openInBrowser(url)
+                Button("No sign-in window? Copy the sign-in link for a private browser window") {
+                    model.copySignInLink(url)
                 }
                 .buttonStyle(.link)
             }

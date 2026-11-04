@@ -4,8 +4,9 @@ import Network
 /// A logging HTTP proxy for the bundled Codex, on 127.0.0.1. Codex is started with HTTPS_PROXY and
 /// friends pointing here, so every host it asks to reach shows up: `CONNECT host:port` is noted and
 /// the encrypted bytes are passed through unchanged (nothing is decrypted or kept). A plain-HTTP
-/// request is noted (host and path, no query) and refused. Each request is stamped with the test's
-/// stage as it arrives, before the proxy connects anywhere.
+/// request is noted (host and path, no query) and refused, and so is a CONNECT to any host but the
+/// allowed ones, so nothing reaches another server even if one of Codex's settings stops working.
+/// Each request is stamped with the test's stage as it arrives, before the proxy connects anywhere.
 final class ConnectProxy: @unchecked Sendable {
     struct Contact: Sendable {
         var host: String
@@ -22,11 +23,14 @@ final class ConnectProxy: @unchecked Sendable {
 
     private let listener: NWListener
     private let queue = DispatchQueue(label: "AIUsageStoreTest.proxy")
+    private let allowedHosts: Set<String>
     private let stage: @Sendable () -> String
     private let onContact: @Sendable (Contact) -> Void
 
-    init(stage: @escaping @Sendable () -> String, onContact: @escaping @Sendable (Contact) -> Void) throws {
+    init(allowedHosts: Set<String>, stage: @escaping @Sendable () -> String,
+         onContact: @escaping @Sendable (Contact) -> Void) throws {
         listener = try LoopbackListener.make(port: 0)
+        self.allowedHosts = allowedHosts
         self.stage = stage
         self.onContact = onContact
     }
@@ -99,6 +103,11 @@ final class ConnectProxy: @unchecked Sendable {
     private func tunnel(_ client: NWConnection, target: String, early: Data, stage: String) {
         guard let (host, port) = Self.split(target), let nwPort = NWEndpoint.Port(rawValue: port) else {
             note(target, 0, "CONNECT", "refused: bad target", stage: stage)
+            refuse(client)
+            return
+        }
+        guard port == 443, allowedHosts.contains(host.lowercased()) else {
+            note(host, Int(port), "CONNECT", "refused: not an OpenAI sign-in or limits server", stage: stage)
             refuse(client)
             return
         }
