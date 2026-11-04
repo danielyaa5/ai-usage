@@ -13,7 +13,8 @@ Sandbox, the way a store app would.
    passes the encrypted bytes through unread. Codex runs with plugins, update checks, analytics,
    feedback, telemetry, history, remote control and the model download turned off, and
    `--strict-config`. Its sign-in is the test's own, kept in the app's container; the test signs out
-   at the end.
+   at the end. If another Codex sign-in is open on the Mac (something already listens on
+   127.0.0.1:1455), the test doesn't start one, because Codex would cancel the other.
 2. **Plain HTTP to this Mac and the local network.** The app and its widget read
    `http://127.0.0.1`, `http://localhost` and, if given, an AI Usage dashboard on another Mac, with
    only the `NSAllowsLocalNetworking` exception to App Transport Security. It records whether macOS

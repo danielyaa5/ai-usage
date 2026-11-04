@@ -29,12 +29,18 @@ enum CodexHelper {
     /// Signing in talks to auth.openai.com and reading limits to chatgpt.com. Anything else is extra.
     static let expectedHosts: Set<String> = ["auth.openai.com", "chatgpt.com"]
 
-    /// Stages in which Codex has no reason to use the network.
-    static let quietStages: Set<String> = ["startup", "idle"]
+    /// Stages in which Codex has no reason to use the network: before the app says hello, the
+    /// seconds after it when no one is signed in, and while idle.
+    static let quietStages: Set<String> = ["startup", "initialize", "idle"]
+
+    /// The seconds after hello when a sign-in is stored. Codex then checks the account's workspace
+    /// (chatgpt.com/backend-api/wham/accounts/check), so chatgpt.com is expected and nothing else.
+    static let signedInHelloStage = "initialize, signed in"
 
     /// config.toml for codex-cli 0.166.0: the ChatGPT sign-in is kept in CODEX_HOME/auth.json (not the
-    /// keychain), and plugins, update checks, analytics, feedback, telemetry, history, bundled skills,
-    /// remote control and the model download are off.
+    /// keychain), and plugins, update checks, analytics, feedback, telemetry, history, bundled skills
+    /// and the model download are off. (Remote control is off through the environment; its
+    /// [features] key does nothing in this release.)
     static func configText(modelCatalog: URL?) -> String {
         var lines = [
             "# Written by AI Usage Store Test, which runs Codex only to sign in and read usage limits.",
@@ -70,7 +76,6 @@ enum CodexHelper {
             "remote_plugin = false",
             "plugin_discovery_prefetch = false",
             "apps = false",
-            "remote_control = false",
             "system_proxy_fallback = false",
             "respect_system_proxy = false",
             "shell_snapshot = false",
@@ -121,6 +126,8 @@ enum CodexHelper {
             // Connections and responses (reqwest), warnings from everything else. No request headers.
             "RUST_LOG": "warn,reqwest=debug",
             "NO_COLOR": "1",
+            // Codex's own switch for remote control (an internal variable its daemon sets).
+            "CODEX_INTERNAL_APP_SERVER_REMOTE_CONTROL_DISABLED": "1",
         ]
         if let proxyPort {
             let proxy = "http://127.0.0.1:\(proxyPort)"
@@ -157,6 +164,15 @@ enum CodexHelper {
 
     static var hasSignIn: Bool {
         FileManager.default.fileExists(atPath: home.appendingPathComponent("auth.json").path)
+    }
+
+    /// What /etc/codex holds (names only). Codex reads managed settings there at startup, and stops if
+    /// it can't read a file that exists.
+    static var systemSettings: String {
+        let manager = FileManager.default
+        guard manager.fileExists(atPath: "/etc/codex") else { return "none" }
+        guard let names = try? manager.contentsOfDirectory(atPath: "/etc/codex") else { return "exists, can't list it" }
+        return names.isEmpty ? "empty" : names.sorted().joined(separator: ", ")
     }
 
     /// Deletes the test's own sign-in file without reading it, when Codex couldn't sign out.
@@ -498,10 +514,13 @@ extension TestModel {
             }
         }
         let launched = Date()
+        let signedInAtLaunch = CodexHelper.hasSignIn
         var facts = [
             "helper": CodeSigning.summary(of: executable),
             "proxy": proxyPort == nil ? "none" : "the app's logging proxy",
             "modelCatalog": CodexHelper.modelCatalog == nil ? "missing, so Codex may download one" : "bundled",
+            "signInStored": signedInAtLaunch ? "yes" : "no",
+            "etcCodex": CodexHelper.systemSettings,
         ]
         do {
             try client.start()
@@ -511,6 +530,12 @@ extension TestModel {
         }
         codex = client
         results.event("Started Codex (pid \(client.pid)) \(proxyPort == nil ? "without" : "behind") the logging proxy.")
+        if proxyPort != nil {
+            // Anything Codex does by itself before the app says hello counts as "startup".
+            codexStatus = "Watching Codex start…"
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            codexStage.value = signedInAtLaunch ? CodexHelper.signedInHelloStage : "initialize"
+        }
         do {
             let hello = try await client.request("initialize", params: [
                 "clientInfo": ["name": "ai_usage_store_test", "title": "AI Usage Store Test", "version": shortVersion],
@@ -528,8 +553,7 @@ extension TestModel {
             results.set(checkID, test: 1, title, .passed, "Codex \(codexVersion ?? "?") is running in the sandbox and answered.",
                         facts: facts)
             if proxyPort != nil {
-                // Anything Codex does by itself at startup (plugins, update checks) counts as "startup".
-                codexStatus = "Watching Codex start…"
+                // And what it does in the seconds after hello (plugins, update checks) counts as "initialize".
                 try? await Task.sleep(nanoseconds: 5_000_000_000)
             }
             return (client, run)
@@ -548,6 +572,15 @@ extension TestModel {
     /// Starts the ChatGPT sign-in and waits up to Codex's own ten minutes for it to finish.
     private func signIn(_ client: CodexClient, _ run: CodexRun) async -> Bool {
         let title = "Sign-in with ChatGPT in a sandboxed browser window"
+        // Codex's sign-in waits on 127.0.0.1:1455 and cancels whatever already listens there, which
+        // would be another Codex sign-in in progress (`codex login`, the Codex app). Don't.
+        let port = await URLCheck.probe(host: "127.0.0.1", port: 1455, timeout: 2)
+        if port == "ready" {
+            results.set("codex.login", test: 1, title, .skipped,
+                        "Another Codex sign-in seems to be open on this Mac (something listens on 127.0.0.1:1455). Finish or close it, then click Sign in again.")
+            codexStatus = "Another Codex sign-in is open on this Mac. Finish or close it, then try again."
+            return false
+        }
         codexStage.value = "login"
         let reply: [String: Any]
         do {
@@ -763,7 +796,10 @@ extension TestModel {
             return
         }
         let unexpectedHosts = hosts.filter { !CodexHelper.expectedHosts.contains($0) }
-        let quiet = opened.filter { CodexHelper.quietStages.contains($0.stage) }
+        let quiet = opened.filter { contact in
+            CodexHelper.quietStages.contains(contact.stage) ||
+                (contact.stage == CodexHelper.signedInHelloStage && contact.host != "chatgpt.com")
+        }
         var problems: [String] = []
         if !unexpectedHosts.isEmpty { problems.append("other servers: \(unexpectedHosts.joined(separator: ", "))") }
         if !quiet.isEmpty {
