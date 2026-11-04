@@ -14,11 +14,12 @@ enum StatusLineSnippet {
     static let marker = ": ai-usage-v1;"
     static let jqFilter = "select(.rate_limits)|{rate_limits}"
     static let sedScript = #"s/.*"rate_limits":([{]([^{}]|[{][^{}]*[}])*[}]).*/{"rate_limits":\1}/p"#
-    static let userSeparator = #" printf '%s\n' "$_aiu" | { "#
+    /// The user's command runs in a /bin/sh of its own, as one single-quoted argument, the way Claude
+    /// Code runs a status line command. So nothing in it (a lone comment, a heredoc closed by the end
+    /// of the text, a trailing backslash) can change how the rest of the snippet parses.
+    static let userSeparator = #" printf '%s\n' "$_aiu" | /bin/sh -c '"#
 
-    /// The command for settings.json; empty when the port or token is unusable. When there is a user
-    /// command, a newline comes before the closing brace, so a trailing comment in it can't swallow
-    /// the brace.
+    /// The command for settings.json; empty when the port or token is unusable.
     static func command(port: Int, token: String, userCommand: String?) -> String {
         guard (1...65535).contains(port),
               token.range(of: #"^[A-Za-z0-9_-]{16,128}$"#, options: .regularExpression) != nil else { return "" }
@@ -31,9 +32,9 @@ enum StatusLineSnippet {
             "http://127.0.0.1:", String(port), "/claude-status ) </dev/null >/dev/null 2>&1 &",
         ]
         var command = parts.joined()
-        let user = unwrap(userCommand ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        if !user.isEmpty {
-            command += userSeparator + user + "\n}"
+        let user = unwrap(userCommand ?? "")
+        if !user.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            command += userSeparator + user.replacingOccurrences(of: "'", with: #"'\''"#) + "'"
         }
         return command
     }
@@ -42,15 +43,8 @@ enum StatusLineSnippet {
     static func unwrap(_ command: String) -> String {
         guard command.hasPrefix(marker) else { return command }
         guard let range = command.range(of: userSeparator) else { return "" }
-        var inner = String(command[range.upperBound...])
-        if inner.hasSuffix("\n}") { inner.removeLast(2) }
-        return inner
-    }
-
-    /// The command as a JSON string literal, quotes included, for `"command": …` in settings.json.
-    static func jsonStringLiteral(_ text: String) -> String {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.withoutEscapingSlashes]
-        return (try? encoder.encode(text)).map { String(decoding: $0, as: UTF8.self) } ?? "\"\""
+        var quoted = String(command[range.upperBound...])
+        if quoted.hasSuffix("'") { quoted.removeLast() }
+        return quoted.replacingOccurrences(of: #"'\''"#, with: "'")
     }
 }

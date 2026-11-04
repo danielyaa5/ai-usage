@@ -83,6 +83,11 @@ final class TestModel: ObservableObject {
     @Published var snippet: String?
     @Published var claudeReadings: [StatusLineReading] = []
     @Published var sampleReadings = 0
+    /// Self-test readings that weren't exactly the sample's rate_limits.
+    @Published var sampleMismatches = 0
+    /// Set by the runner around its self-tests: every reading in that time is the self-test's, so one
+    /// the snippet mangled can't pass for Claude Code's.
+    private var selfTestRunning = false
     @Published var widgetReports: [StoreTestShared.WidgetReport] = []
 
     private var server: LoopbackServer?
@@ -381,7 +386,7 @@ final class TestModel: ObservableObject {
             windows[name] = StatusLineReading.Window(usedPercentage: (window["used_percentage"] as? NSNumber)?.doubleValue,
                                                      resetsAt: (window["resets_at"] as? NSNumber)?.doubleValue)
         }
-        let selfTest = windows.values.contains { $0.resetsAt == Self.sampleResetsAt }
+        let selfTest = selfTestRunning || windows.values.contains { $0.resetsAt == Self.sampleResetsAt }
         let reading = StatusLineReading(at: Date(), hasRateLimits: limits != nil, windows: windows,
                                         topLevelKeys: keys, selfTest: selfTest, bytes: body.count)
         statusReadings.append(reading)
@@ -389,6 +394,12 @@ final class TestModel: ObservableObject {
         results.event("Status line \(selfTest ? "self-test" : "reading"): keys \(keys), windows \(names)")
         if selfTest {
             sampleReadings += 1
+            if !Self.isExactSample(reading) { sampleMismatches += 1 }
+            results.set("statusline.selftest-content", test: 4, "Self-tests sent exactly the sample's limits",
+                        sampleMismatches == 0 ? .passed : .failed,
+                        sampleMismatches == 0
+                            ? "All \(sampleReadings) self-test readings held only rate_limits, with the sample's numbers."
+                            : "\(sampleMismatches) of \(sampleReadings) didn't; the last had keys \(keys) and windows \(names).")
             return
         }
         claudeReadings.append(reading)
@@ -416,6 +427,14 @@ final class TestModel: ObservableObject {
         results.set("statusline.windows", test: 4, "Which limits Claude Code reports for this account",
                     everWeekly ? .passed : .info,
                     "Weekly: \(everWeekly ? "yes" : "no"); 5-hour: \(everFiveHour ? "yes" : "no").")
+    }
+
+    /// The runner's sample has exactly these two windows, both resetting in 2100.
+    static func isExactSample(_ reading: StatusLineReading) -> Bool {
+        reading.topLevelKeys == ["rate_limits"] && reading.windows.count == 2
+            && reading.windows["five_hour"]?.usedPercentage == 11.5
+            && reading.windows["seven_day"]?.usedPercentage == 22.5
+            && reading.windows.values.allSatisfy { $0.resetsAt == sampleResetsAt }
     }
 
     // MARK: - Automatic phases
@@ -466,6 +485,10 @@ final class TestModel: ObservableObject {
         case ("POST", "/claude-status"):
             receiveStatusLine(body)
             return .text("")
+        case ("POST", "/selftest"):
+            selfTestRunning = String(decoding: body, as: UTF8.self) == "start"
+            results.event("Status line self-tests \(selfTestRunning ? "started" : "finished").")
+            return .text("")
         case ("POST", "/widget-result"):
             if let report = try? StoreTestShared.decoder.decode(StoreTestShared.WidgetReport.self, from: body) {
                 take(report)
@@ -499,7 +522,7 @@ final class TestModel: ObservableObject {
     }
 
     func stateLine() -> String {
-        "phase=\(options.phase.rawValue) handoff=\(handoff ? 1 : 0) done=\(done ? 1 : 0) claude=\(claudeReadings.count) sample=\(sampleReadings) widget=\(widgetReports.count) codex=\(codexRunning ? "busy" : "idle")"
+        "phase=\(options.phase.rawValue) handoff=\(handoff ? 1 : 0) done=\(done ? 1 : 0) claude=\(claudeReadings.count) sample=\(sampleReadings) samplebad=\(sampleMismatches) widget=\(widgetReports.count) codex=\(codexRunning ? "busy" : "idle")"
     }
 
     func report() -> Report {

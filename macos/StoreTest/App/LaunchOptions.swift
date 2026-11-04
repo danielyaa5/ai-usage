@@ -24,7 +24,7 @@ struct LaunchOptions {
         }
         if let phase = value(after: "--phase").flatMap(Phase.init(rawValue:)) { options.phase = phase }
         options.port = value(after: "--port").flatMap { UInt16($0) }
-        if let token = value(after: "--token"), token.count >= 16,
+        if let token = value(after: "--token"), (16...128).contains(token.count),
            token.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }) {
             options.token = token
         }

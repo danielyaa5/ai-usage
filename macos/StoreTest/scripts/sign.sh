@@ -72,7 +72,7 @@ for n in 1 2; do
   [ -f "unsigned-$n.zip" ] || { echo "Missing unsigned-$n.zip; run build.sh first." >&2; exit 1; }
   mkdir -p "$KIT/work.noindex"   # Spotlight and LaunchServices skip .noindex folders
   WORK=$(mktemp -d "$KIT/work.noindex/sign.XXXXXX")
-  ditto -x -k "unsigned-$n.zip" "$WORK"
+  ditto --noqtn -x -k "unsigned-$n.zip" "$WORK"
   APP="$WORK/$APP_NAME"
   HELPER="$APP/Contents/MacOS/$HELPER_NAME"
   WIDGET="$APP/Contents/PlugIns/StoreTestWidget.appex"

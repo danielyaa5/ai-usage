@@ -18,9 +18,13 @@ function writeText(path, text) {
   }
 }
 
+// Only a missing file counts as no settings: one that can't be read (permissions, not UTF-8) stops
+// here, so a switch can't replace it with a file that holds nothing but statusLine.
 function load(path) {
   const text = readText(path);
-  return text === null ? {} : JSON.parse(text);
+  if (text !== null) return JSON.parse(text);
+  if ($.NSFileManager.defaultManager.fileExistsAtPath(path)) throw new Error('Could not read ' + path);
+  return {};
 }
 
 function save(path, settings) {
