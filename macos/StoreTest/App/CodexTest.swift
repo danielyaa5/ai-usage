@@ -33,9 +33,12 @@ enum CodexHelper {
     /// seconds after it when no one is signed in, and while idle.
     static let quietStages: Set<String> = ["startup", "initialize", "idle"]
 
-    /// The seconds after hello when a sign-in is stored. Codex then checks the account's workspace
-    /// (chatgpt.com/backend-api/wham/accounts/check), so chatgpt.com is expected and nothing else.
+    /// The same stages before and after hello when a sign-in is stored. Codex then checks the
+    /// account's workspace (chatgpt.com/backend-api/wham/accounts/check), as it starts or right after
+    /// hello, so chatgpt.com is expected in them and nothing else.
+    static let signedInStartupStage = "startup, signed in"
     static let signedInHelloStage = "initialize, signed in"
+    static let signedInStages: Set<String> = [signedInStartupStage, signedInHelloStage]
 
     /// config.toml for codex-cli 0.166.0: the ChatGPT sign-in is kept in CODEX_HOME/auth.json (not the
     /// keychain), and plugins, update checks, analytics, feedback, telemetry, history, bundled skills
@@ -496,7 +499,8 @@ extension TestModel {
         }
         let run = CodexRun(label: label)
         codexRuns.append(run)
-        codexStage.value = proxyPort == nil ? "direct" : "startup"
+        let signedInAtLaunch = CodexHelper.hasSignIn
+        codexStage.value = proxyPort == nil ? "direct" : (signedInAtLaunch ? CodexHelper.signedInStartupStage : "startup")
         // Its working folder has to be the app's own: in a folder outside the container (/private/tmp,
         // say) the sandboxed Codex stops at startup.
         let client = CodexClient(executable: executable, arguments: CodexHelper.arguments,
@@ -520,8 +524,6 @@ extension TestModel {
                 if !run.stopping { self?.results.event("Codex exited by itself (\(text)).") }
             }
         }
-        let launched = Date()
-        let signedInAtLaunch = CodexHelper.hasSignIn
         var facts = [
             "helper": CodeSigning.summary(of: executable),
             "proxy": proxyPort == nil ? "none" : "the app's logging proxy",
@@ -543,6 +545,8 @@ extension TestModel {
             try? await Task.sleep(nanoseconds: 2_000_000_000)
             codexStage.value = signedInAtLaunch ? CodexHelper.signedInHelloStage : "initialize"
         }
+        // How long Codex takes to answer hello, without the test's own wait before it.
+        let helloSent = Date()
         do {
             let hello = try await client.request("initialize", params: [
                 "clientInfo": ["name": "ai_usage_store_test", "title": "AI Usage Store Test", "version": shortVersion],
@@ -556,7 +560,7 @@ extension TestModel {
             facts["userAgent"] = String(userAgent.prefix(200))
             facts["platform"] = "\(hello["platformFamily"] as? String ?? "?")/\(hello["platformOs"] as? String ?? "?")"
             facts["codexHomeInContainer"] = codexHome.contains("/Library/Containers/") ? "yes" : "no"
-            facts["seconds"] = String(format: "%.1f", Date().timeIntervalSince(launched))
+            facts["seconds"] = String(format: "%.1f", Date().timeIntervalSince(helloSent))
             results.set(checkID, test: 1, title, .passed, "Codex \(codexVersion ?? "?") is running in the sandbox and answered.",
                         facts: facts)
             if proxyPort != nil {
@@ -813,7 +817,7 @@ extension TestModel {
         let unexpectedHosts = hosts.filter { !CodexHelper.expectedHosts.contains($0) }
         let quiet = opened.filter { contact in
             CodexHelper.quietStages.contains(contact.stage) ||
-                (contact.stage == CodexHelper.signedInHelloStage && contact.host != "chatgpt.com")
+                (CodexHelper.signedInStages.contains(contact.stage) && contact.host != "chatgpt.com")
         }
         var problems: [String] = []
         if !unexpectedHosts.isEmpty { problems.append("other servers: \(unexpectedHosts.joined(separator: ", "))") }
