@@ -433,6 +433,8 @@ SAMPLER=$!
 say "Steps 1 to 3 are in the app window"
 launch first || exit 1
 echo "Work through steps 1 to 3 in the app window, then click Continue in Terminal there."
+echo "Leave the app's window open until this script says it's done: closing it quits the app, and the"
+echo "steps after it are skipped. The app opens twice more by itself later; leave those windows open too."
 echo "(Or press Enter here to move on.)"
 while app_running; do
   [ "$(state_value handoff)" = 1 ] && break
@@ -546,7 +548,7 @@ fi
 save first
 quit_app
 
-say "Relaunching the app (it checks by itself)"
+say "Relaunching the app (it checks by itself; leave its window open)"
 if launch relaunch; then
   for _ in $(seq 1 60); do
     [ "$(state_value done)" = 1 ] && break
@@ -556,7 +558,7 @@ if launch relaunch; then
 fi
 quit_app
 
-say "Installing build 2 over it, as an update would, and checking again"
+say "Installing build 2 over it, as an update would, and checking again (leave its window open)"
 install_build 2
 if launch update; then
   for _ in $(seq 1 60); do
