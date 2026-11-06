@@ -3,6 +3,7 @@
 # runs sign.sh first when the builds aren't signed yet):
 #
 #   ./run.sh [DASHBOARD_URL]
+#   ./run.sh --status-line
 #
 # DASHBOARD_URL is an AI Usage dashboard on another Mac on your network, such as
 # http://my-mac.local:8796/api/widget, for the local network checks. It can also come from a
@@ -12,6 +13,9 @@
 # Claude Code status line snippet with you (it switches your status line for a minute, if you agree,
 # and puts it back), relaunches the app, installs build 2 over it the way an update would, and
 # collects everything in results/<time>/ next to this script.
+#
+# --status-line repeats only that status line check (step 4), with the test app already installed
+# (or build 2, if it isn't). It takes a few minutes.
 set -uo pipefail
 
 # It asks you questions, so it needs a terminal: without one, every answer would be a guess.
@@ -19,6 +23,12 @@ if ! { : </dev/tty; } 2>/dev/null; then
   echo "Run this in Terminal: it asks you questions as it goes." >&2
   exit 1
 fi
+
+MODE=full
+case "${1:-}" in
+  --status-line) MODE=status-line; shift ;;
+  -*) echo "Unknown option $1. Usage: ./run.sh [DASHBOARD_URL] or ./run.sh --status-line" >&2; exit 1 ;;
+esac
 
 KIT=$(cd "$(dirname "$0")" && pwd)
 APP_NAME="AI Usage Store Test"
@@ -326,6 +336,8 @@ is_snippet() { case "$1" in ': ai-usage-v1;'*) return 0 ;; *) return 1 ;; esac; 
 
 INSTALLED=0    # set once build 1 is installed
 SIGNED_OUT=0   # set once the update phase, which signs the test out of ChatGPT, has finished
+OPENED=0       # set once the script has opened a Terminal window with Claude Code
+QUIT_HINTED=0  # set once you've been told you can quit that Claude Code session
 
 # A port and token for the app's test listener, kept between runs so a pasted snippet stays valid.
 # They're loaded before the cleanup is set up, so it can quit an app left over from an earlier run.
@@ -347,6 +359,9 @@ cleanup() {
   if [ "$INSTALLED" = 1 ] && [ "$SIGNED_OUT" = 0 ]; then
     echo "The test stopped before its last step, where it signs out of ChatGPT, so its own sign-in may"
     echo "still be in the app's container. Deleting the app's containers (see README.md) removes it."
+  fi
+  if [ "$OPENED" = 1 ] && [ "$QUIT_HINTED" = 0 ]; then
+    echo "The Claude Code window this test opened is still open; type /exit in it to quit."
   fi
 }
 trap cleanup EXIT
@@ -383,20 +398,314 @@ selftest() {  # selftest SNIPPET SHELL LABEL
   fi
 }
 
+installed_test_app() {  # status 0 when /Applications holds this test app
+  [ -d "$APP" ] || return 1
+  case "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist" 2>/dev/null)" in
+    *.AIUsageStoreTest) return 0 ;;
+  esac
+  return 1
+}
+
+sign_if_needed() {
+  if [ ! -f "$KIT/signed-1.zip" ] || [ ! -f "$KIT/signed-2.zip" ] ||
+     [ "$KIT/unsigned-1.zip" -nt "$KIT/signed-1.zip" ] || [ "$KIT/unsigned-2.zip" -nt "$KIT/signed-2.zip" ]; then
+    say "Signing the two builds"
+    echo "With your Apple Development certificate. If macOS asks to let codesign use a key in your"
+    echo "keychain, enter your password and click Always Allow (or Allow, once for each build)."
+    if ! "$KIT/sign.sh"; then
+      echo "Signing failed (see above), so the test stopped."
+      exit 1
+    fi
+  fi
+}
+
+# Claude Code's own path, so the window opened for it doesn't depend on your shell's aliases.
+find_claude() {
+  local candidate
+  for candidate in "$(command -v claude 2>/dev/null)" "$HOME/.local/bin/claude" "$HOME/.claude/local/claude" \
+      /opt/homebrew/bin/claude /usr/local/bin/claude; do
+    if [ -n "$candidate" ] && [ -f "$candidate" ] && [ -x "$candidate" ]; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Claude Code runs in an empty folder of the kit's, not your home folder, where reading the folder
+# could make macOS ask about Desktop, Documents or Downloads, which has nothing to do with this test.
+CLAUDE_SESSION_DIR="$KIT/work.noindex/claude-session"
+
+claude_env_prefix() {  # CLAUDE_CONFIG_DIR=... when it's set here, so Claude Code reads the settings this test switched
+  [ -n "${CLAUDE_CONFIG_DIR:-}" ] && printf 'CLAUDE_CONFIG_DIR=%q ' "$CLAUDE_CONFIG_DIR"
+  return 0
+}
+
+open_claude_session() {  # a new Terminal window with Claude Code; the launcher file deletes itself
+  local claude launcher="$KIT/work.noindex/Claude Code for the store test.command"
+  claude=$(find_claude) || return 1
+  mkdir -p "$CLAUDE_SESSION_DIR" || return 1
+  printf '#!/bin/bash\n# Opened by run.sh for the status line check.\nrm -f -- "$0"\ncd %q && %sexec %q\n' \
+    "$CLAUDE_SESSION_DIR" "$(claude_env_prefix)" "$claude" > "$launcher" || return 1
+  if chmod 700 "$launcher" && open -a Terminal "$launcher"; then
+    OPENED=1
+    return 0
+  fi
+  rm -f "$launcher"
+  return 1
+}
+
+# Claude Code's trust question can start with "No, exit" selected, so Return alone would quit it.
+TRUST_HINT='If Claude Code asks whether you trust this folder, use the arrow keys to pick "Yes, I trust this folder" before pressing Return.'
+
+start_window() {  # opens the window, or explains how to start Claude Code by hand
+  if open_claude_session; then
+    echo "In the new window, which opens in an empty folder of this kit:"
+    echo "$TRUST_HINT"
+    echo "Then type a short message such as \"hi\", press Return, wait for the reply, and come back here."
+  else
+    manual_steps "Couldn't open it. Start Claude Code yourself in another Terminal tab:"
+  fi
+}
+
+start_claude() {
+  if find_claude >/dev/null && ask "Open a new Terminal window with Claude Code for this?" ""; then
+    start_window
+  else
+    manual_steps "Start Claude Code in another Terminal tab:"
+  fi
+}
+
+manual_steps() {  # manual_steps FIRST_LINE: how to start Claude Code by hand
+  mkdir -p "$CLAUDE_SESSION_DIR" 2>/dev/null
+  echo "$1"
+  printf '  cd %q && %sclaude\n' "$CLAUDE_SESSION_DIR" "$(claude_env_prefix)"
+  echo "$TRUST_HINT"
+  echo "Then send a short message such as \"hi\" and wait for the reply."
+}
+
+# Waits up to 10 minutes for a reading from Claude Code's status line, reminding you every minute.
+# Status 0 when one has arrived since CLAUDE_BEFORE, also one that came while you were answering a question.
+CLAUDE_BEFORE=0
+WAITED=0
+got_reading() { local now; now=$(state_value claude); [ "${now:-0}" -gt "${CLAUDE_BEFORE:-0}" ] 2>/dev/null; }
+
+wait_for_reading() {
+  local waited=0 started=$SECONDS
+  echo "Waiting for a reading from Claude Code (press Enter to stop waiting)..."
+  while [ "$waited" -lt 600 ]; do
+    if got_reading; then
+      WAITED=$((WAITED + SECONDS - started))
+      echo "Got a reading from Claude Code."
+      return 0
+    fi
+    if ! app_running; then
+      WAITED=$((WAITED + SECONDS - started))
+      echo "The test app isn't running any more, so no reading can arrive."
+      return 1
+    fi
+    # In a subshell: on bash 3.2, a Ctrl-C during read -t can leave its alarm set to go off in the cleanup.
+    if ( IFS= read -r -t 5 _ </dev/tty ); then break; fi
+    waited=$((waited + 5))
+    if [ $((waited % 60)) -eq 0 ] && [ "$waited" -lt 600 ]; then
+      echo "  Still waiting after $((waited / 60)) min: send Claude Code a message and wait for its reply."
+    fi
+  done
+  WAITED=$((WAITED + SECONDS - started))
+  if got_reading; then
+    echo "Got a reading from Claude Code."
+    return 0
+  fi
+  return 1
+}
+
+status_line_step() {  # status_line_step PHASE: step 4, with the app's results saved as PHASE
+  local phase=$1 current read_status test_snippet snippet got=0 sent=0 what why
+  say "Step 4: your Claude Code status line"
+  if ! app_running; then
+    echo "The app isn't running any more; skipping the status line check."
+    return
+  fi
+  current=$(osascript -l JavaScript "$KIT/settings.js" command "$SETTINGS" 2>>"$OUT/runner-errors.txt")
+  read_status=$?
+  if [ "$read_status" -ne 0 ]; then
+    echo "Couldn't read $SETTINGS as JSON, so the status line part is skipped."
+    note statusline.settings 4 "Your Claude Code settings" skipped "settings.json couldn't be read as JSON."
+    return
+  fi
+  if [ -n "$current" ]; then
+    # Shown on screen only, so your command stays out of the results.
+    printf 'Your status line command now: %s\n' "$current" >/dev/tty
+    echo "You have a status line command (${#current} characters)."
+  else
+    echo "You have no status line command now."
+  fi
+  echo "First, a self-test with made-up numbers (your settings aren't touched):"
+  test_snippet=$(printf '%s' 'printf "STATUS-OK "; cksum' | api POST /snippet -H 'X-Snippet-Purpose: test' --data-binary @-)
+  if ! is_snippet "$test_snippet"; then
+    echo "The app didn't build a snippet."
+    note statusline.selftest 4 "Snippet self-test" failed "The app didn't build a snippet."
+  else
+    printf '%s\n' "$test_snippet" | sed "s/$TOKEN/TOKEN/g" > "$OUT/snippet-selftest.txt"
+    # Every reading in this time is the self-test's, even one the snippet got wrong.
+    api POST /selftest --data-binary start >/dev/null 2>&1 || true
+    selftest "$test_snippet" /bin/sh "sh"
+    selftest "$test_snippet" /bin/zsh "zsh"
+    selftest "$(printf '%s' "$test_snippet" | sed 's#/usr/bin/jq#/nonexistent/jq#g')" /bin/sh "sed-fallback"
+    api POST /selftest --data-binary stop >/dev/null 2>&1 || true
+    [ -x /usr/bin/jq ] && note statusline.jq 4 "/usr/bin/jq on this Mac" info "$(/usr/bin/jq --version 2>&1)" \
+      || note statusline.jq 4 "/usr/bin/jq on this Mac" info "not installed (the snippet uses sed)"
+  fi
+  save "$phase"
+  snippet=$(printf '%s' "$current" | api POST /snippet --data-binary @-)
+  if ! is_snippet "$snippet"; then
+    echo "The app didn't build the snippet; skipping."
+    note statusline.switch 4 "Status line switched for the test" failed "The app didn't build the snippet."
+    return
+  fi
+  if ! ask "Switch your Claude Code status line to the test snippet now? Your settings are backed up first and put back right after." ""; then
+    note statusline.switch 4 "Status line switched for the test" skipped "You chose not to."
+    return
+  fi
+  if ! back_up_settings "$snippet"; then
+    echo "$SKIP_REASON So the switch is skipped, and your settings weren't touched."
+    note statusline.switch 4 "Status line switched for the test" skipped "$SKIP_REASON"
+    return
+  fi
+  SWITCHED=1
+  BACKUP_PENDING=0
+  # settings.js writes settings.json.written, the exact copy, before it changes settings.json.
+  if ! osascript -l JavaScript "$KIT/settings.js" set "$SETTINGS_FILE" "$BACKUP_DIR/snippet.txt" "$BACKUP_DIR/settings.json.written" >/dev/null 2>>"$OUT/runner-errors.txt"; then
+    echo "Couldn't write $SETTINGS; skipping."
+    note statusline.switch 4 "Status line switched for the test" failed "settings.json couldn't be written."
+    restore_status_line
+    return
+  fi
+  [ -n "$SETTINGS_MODE" ] && chmod "$SETTINGS_MODE" "$SETTINGS_FILE"
+  CLAUDE_BEFORE=$(state_value claude)
+  WAITED=0
+  echo
+  echo "Switched. Now Claude Code has to answer one message: it passes your subscription limits to the"
+  echo "status line only after Anthropic has replied."
+  start_claude
+  while true; do
+    if wait_for_reading; then
+      got=1
+      break
+    fi
+    app_running || break
+    if ask "No reading yet. Did you send Claude Code a message and get its reply while this waited?" ""; then
+      sent=1
+      break
+    fi
+    got_reading && break   # it came while you were answering
+    ask "Wait again? Send Claude Code a message first, then answer y." "" || break
+    got_reading && continue
+    if [ "$OPENED" = 1 ]; then
+      if ask "Open a new Claude Code window? (Answer n if the one from before is still open.)" ""; then
+        start_window
+      fi
+    else
+      manual_steps "If Claude Code isn't running, start it in another Terminal tab:"
+    fi
+  done
+  # A reading can also arrive while you answer the questions above, or a moment after a reply.
+  if [ "$got" = 0 ] && [ "$sent" = 1 ]; then
+    echo "Checking for a reading a few more seconds..."
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+      got_reading && break
+      app_running || break
+      sleep 1
+    done
+  fi
+  if [ "$got" = 0 ] && got_reading; then
+    got=1
+    echo "Got a reading from Claude Code."
+  fi
+  why=""
+  if [ "$got" = 0 ]; then
+    if ! app_running; then
+      why="The test app quit during the check."
+      note statusline.claude 4 "Readings from Claude Code's status line" failed "The test app quit during the wait ($WAITED s), so no reading could arrive. If it crashed, the report is in crashes/."
+    elif [ "$sent" = 1 ]; then
+      note statusline.claude 4 "Readings from Claude Code's status line" failed "No reading arrived, although you sent Claude Code a message and got its reply (waited $WAITED s)."
+    else
+      why="Claude Code didn't answer a message during the check."
+      note statusline.claude 4 "Readings from Claude Code's status line" skipped "Not tested: Claude Code didn't answer a message while this waited ($WAITED s)."
+    fi
+  fi
+  save "$phase"
+  if [ -z "$why" ]; then
+    if [ -n "$current" ]; then
+      if ask "Did your status line in Claude Code look the same as before?" ""; then
+        note statusline.looks-same 4 "Your status line looked the same" passed "You said yes."
+      else
+        note statusline.looks-same 4 "Your status line looked the same" failed "You said no."
+      fi
+    elif ask "Did Claude Code work as usual? (With no status line of your own, its status line row stays empty.)" ""; then
+      note statusline.looks-same 4 "Claude Code worked as usual with the snippet" passed "You said yes."
+    else
+      note statusline.looks-same 4 "Claude Code worked as usual with the snippet" failed "You said no."
+    fi
+    if ask "Apart from this script's questions and Claude Code asking whether you trust the folder, did anything ask you for permission?" ""; then
+      printf 'What asked, in a few words? (It goes in the results.) '
+      IFS= read -r what </dev/tty || what=""
+      # At most 200 characters, and never half of one, which would make the note invalid JSON.
+      what=$(printf '%s' "${what:0:200}" | iconv -c -f UTF-8 -t UTF-8 2>/dev/null)
+      [ -n "$what" ] || what="(no description)"
+      note statusline.prompts 4 "No prompts during the hand-off" failed "You saw a prompt: $what"
+    else
+      note statusline.prompts 4 "No prompts during the hand-off" passed "You saw none."
+    fi
+  else
+    note statusline.looks-same 4 "Your status line looked the same" skipped "$why"
+    note statusline.prompts 4 "No prompts during the hand-off" skipped "$why"
+  fi
+  if [ "$OPENED" = 1 ] || [ "$got" = 1 ] || [ "$sent" = 1 ]; then
+    echo "You can quit that Claude Code session now (type /exit in it)."
+    QUIT_HINTED=1
+  fi
+  restore_status_line
+}
+
+collect_logs() {
+  say "Collecting logs"
+  /usr/bin/log show --style ndjson --start "$LOG_START" --predicate 'subsystem == "AIUsageStoreTest"' > "$OUT/unified-log.ndjson" 2>/dev/null
+  /usr/bin/log show --style compact --start "$LOG_START" \
+    --predicate 'eventMessage CONTAINS[c] "deny" AND (eventMessage CONTAINS "codex-app-serv" OR eventMessage CONTAINS "AI Usage Store" OR eventMessage CONTAINS "StoreTestWidget")' \
+    > "$OUT/sandbox-denials.txt" 2>/dev/null   # the kernel's messages can cut a process name short
+  /usr/bin/log show --style compact --start "$LOG_START" --predicate 'process == "nehelper"' 2>/dev/null |
+    grep -i 'AIUsageStoreTest\|Store Test\|StoreTestWidget' > "$OUT/local-network.txt"
+  mkdir -p "$OUT/crashes"
+  find "$HOME/Library/Logs/DiagnosticReports" -maxdepth 1 -newer "$OUT/system.txt" \
+    \( -name 'codex-app-serv*' -o -name 'AI Usage Store*' -o -name 'StoreTestWidget*' \) \
+    -exec cp {} "$OUT/crashes/" \; 2>/dev/null
+  pluginkit -m -v -i "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist").Widget" > "$OUT/pluginkit.txt" 2>&1
+}
+
 # ---------------------------------------------------------------------------------------------------
 
-say "AI Usage store test"
-cat <<EOF
+if [ "$MODE" = status-line ]; then
+  say "AI Usage store test: the status line check again"
+  cat <<EOF
+This repeats only step 4, your Claude Code status line, with the test app in /Applications (it
+installs build 2 first if the app isn't there). A few minutes, most of it one message to Claude Code.
+Results go to $OUT
+EOF
+else
+  say "AI Usage store test"
+  cat <<EOF
 This installs a test app, "$APP_NAME", in /Applications and walks you through four checks:
 your local network and a test widget, picking your .claude and .codex folders, signing in
 to ChatGPT through the bundled Codex, and your Claude Code status line. About ten minutes.
 Results go to $OUT
 EOF
-if [ -n "$LAN_URL" ]; then
-  printf 'Dashboard on your network: %s\n' "$LAN_URL" >/dev/tty
-  echo "A dashboard address on your network was given."
-else
-  echo "No dashboard address given, so the network check is skipped."
+  if [ -n "$LAN_URL" ]; then
+    printf 'Dashboard on your network: %s\n' "$LAN_URL" >/dev/tty
+    echo "A dashboard address on your network was given."
+  else
+    echo "No dashboard address given, so the network check is skipped."
+  fi
 fi
 ask "Start?" y || exit 0
 
@@ -411,185 +720,94 @@ fi
 umask 077
 printf 'PORT=%s\nTOKEN=%s\n' "$PORT" "$TOKEN" > "$STATE"
 umask 022
-{ sw_vers; uname -m; echo "port $PORT"; cat "$KIT/BUILD-INFO.txt" 2>/dev/null; } > "$OUT/system.txt"
+{ sw_vers; uname -m; echo "port $PORT"; echo "mode $MODE"; cat "$KIT/BUILD-INFO.txt" 2>/dev/null; } > "$OUT/system.txt"
 
-if [ ! -f "$KIT/signed-1.zip" ] || [ ! -f "$KIT/signed-2.zip" ] ||
-   [ "$KIT/unsigned-1.zip" -nt "$KIT/signed-1.zip" ] || [ "$KIT/unsigned-2.zip" -nt "$KIT/signed-2.zip" ]; then
-  say "Signing the two builds"
-  echo "With your Apple Development certificate. If macOS asks to let codesign use a key in your"
-  echo "keychain, enter your password and click Always Allow (or Allow, once for each build)."
-  if ! "$KIT/sign.sh"; then
-    echo "Signing failed (see above), so the test stopped."
-    exit 1
+if [ "$MODE" = status-line ]; then
+  if ! installed_test_app; then
+    sign_if_needed
+    say "Installing build 2"
+    install_build 2
   fi
-fi
-
-say "Installing build 1"
-install_build 1
-INSTALLED=1
-sampler &
-SAMPLER=$!
-
-say "Steps 1 to 3 are in the app window"
-launch first || exit 1
-echo "Work through steps 1 to 3 in the app window, then click Continue in Terminal there."
-echo "Leave the app's window open until this script says it's done: closing it quits the app, and the"
-echo "steps after it are skipped. The app opens twice more by itself later; leave those windows open too."
-echo "(Or press Enter here to move on.)"
-while app_running; do
-  [ "$(state_value handoff)" = 1 ] && break
-  # In a subshell: on bash 3.2, a Ctrl-C during read -t can leave its alarm set to go off in the cleanup.
-  if ( IFS= read -r -t 5 _ </dev/tty ); then break; fi
-  save first
-done
-save first
-
-say "Step 4: your Claude Code status line"
-if ! app_running; then
-  echo "The app isn't running any more; skipping the status line check."
+  say "Opening the test app"
+  launch first || exit 1
+  echo "Leave its window open until this script says it's done. Skip steps 1 to 3 in it this time:"
+  echo "only the status line is checked."
+  status_line_step statusline
+  save statusline
+  quit_app
 else
-  CURRENT=$(osascript -l JavaScript "$KIT/settings.js" command "$SETTINGS" 2>>"$OUT/runner-errors.txt")
-  READ_STATUS=$?
-  if [ "$READ_STATUS" -ne 0 ]; then
-    echo "Couldn't read $SETTINGS as JSON, so the status line part is skipped."
-    note statusline.settings 4 "Your Claude Code settings" skipped "settings.json couldn't be read as JSON."
-  else
-    if [ -n "$CURRENT" ]; then
-      # Shown on screen only, so your command stays out of the results.
-      printf 'Your status line command now: %s\n' "$CURRENT" >/dev/tty
-      echo "You have a status line command (${#CURRENT} characters)."
-    else
-      echo "You have no status line command now."
-    fi
-    echo "First, a self-test with made-up numbers (your settings aren't touched):"
-    TEST_SNIPPET=$(printf '%s' 'printf "STATUS-OK "; cksum' | api POST /snippet -H 'X-Snippet-Purpose: test' --data-binary @-)
-    if ! is_snippet "$TEST_SNIPPET"; then
-      echo "The app didn't build a snippet."
-      note statusline.selftest 4 "Snippet self-test" failed "The app didn't build a snippet."
-    else
-      printf '%s\n' "$TEST_SNIPPET" | sed "s/$TOKEN/TOKEN/g" > "$OUT/snippet-selftest.txt"
-      # Every reading in this time is the self-test's, even one the snippet got wrong.
-      api POST /selftest --data-binary start >/dev/null 2>&1 || true
-      selftest "$TEST_SNIPPET" /bin/sh "sh"
-      selftest "$TEST_SNIPPET" /bin/zsh "zsh"
-      selftest "$(printf '%s' "$TEST_SNIPPET" | sed 's#/usr/bin/jq#/nonexistent/jq#g')" /bin/sh "sed-fallback"
-      api POST /selftest --data-binary stop >/dev/null 2>&1 || true
-      [ -x /usr/bin/jq ] && note statusline.jq 4 "/usr/bin/jq on this Mac" info "$(/usr/bin/jq --version 2>&1)" \
-        || note statusline.jq 4 "/usr/bin/jq on this Mac" info "not installed (the snippet uses sed)"
-    fi
-    SNIPPET=$(printf '%s' "$CURRENT" | api POST /snippet --data-binary @-)
-    if ! is_snippet "$SNIPPET"; then
-      echo "The app didn't build the snippet; skipping."
-      note statusline.switch 4 "Status line switched for the test" failed "The app didn't build the snippet."
-    elif ask "Switch your Claude Code status line to the test snippet now? Your settings are backed up first and put back right after." ""; then
-      if ! back_up_settings "$SNIPPET"; then
-        echo "$SKIP_REASON So the switch is skipped, and your settings weren't touched."
-        note statusline.switch 4 "Status line switched for the test" skipped "$SKIP_REASON"
-      else
-        SWITCHED=1
-        BACKUP_PENDING=0
-        # settings.js writes settings.json.written, the exact copy, before it changes settings.json.
-        if osascript -l JavaScript "$KIT/settings.js" set "$SETTINGS_FILE" "$BACKUP_DIR/snippet.txt" "$BACKUP_DIR/settings.json.written" >/dev/null 2>>"$OUT/runner-errors.txt"; then
-          [ -n "$SETTINGS_MODE" ] && chmod "$SETTINGS_MODE" "$SETTINGS_FILE"
-          echo
-          echo "Done. Now start a new Claude Code session in another Terminal tab (cd ~ && claude, and say"
-          echo "yes if it asks whether you trust the folder), send a short message such as \"hi\" and wait for"
-          echo "the reply. Check that your status line looks as it did."
-          echo "Waiting for a reading from Claude Code (press Enter to stop waiting)..."
-          BEFORE=$(state_value claude)
-          NOW=$BEFORE
-          WAITED=0
-          while [ "$WAITED" -lt 600 ]; do
-            NOW=$(state_value claude)
-            if [ "${NOW:-0}" -gt "${BEFORE:-0}" ]; then
-              echo "Got a reading from Claude Code."
-              sleep 3
-              break
-            fi
-            if ( IFS= read -r -t 5 _ </dev/tty ); then break; fi
-            WAITED=$((WAITED + 5))
-          done
-          # A reading can arrive while Enter is pressed. A request that fails now (the app quit) mustn't
-          # undo one the loop already saw.
-          LATEST=$(state_value claude)
-          [ "${LATEST:-0}" -gt "${NOW:-0}" ] 2>/dev/null && NOW=$LATEST
-          if [ "${NOW:-0}" -le "${BEFORE:-0}" ]; then
-            note statusline.claude 4 "Readings from Claude Code's status line" failed "No reading arrived (waited $WAITED s)."
-          fi
-          save first
-          if ask "Did your status line look the same as before?" ""; then
-            note statusline.looks-same 4 "Your status line looked the same" passed "You said yes."
-          else
-            note statusline.looks-same 4 "Your status line looked the same" failed "You said no."
-          fi
-          if ask "Did anything ask you for permission (macOS or Claude Code)?" ""; then
-            note statusline.prompts 4 "No prompts during the hand-off" failed "You saw a prompt."
-          else
-            note statusline.prompts 4 "No prompts during the hand-off" passed "You saw none."
-          fi
-        else
-          echo "Couldn't write $SETTINGS; skipping."
-          note statusline.switch 4 "Status line switched for the test" failed "settings.json couldn't be written."
-        fi
-        restore_status_line
-      fi
-    else
-      note statusline.switch 4 "Status line switched for the test" skipped "You chose not to."
-    fi
+  sign_if_needed
+
+  say "Installing build 1"
+  install_build 1
+  INSTALLED=1
+  sampler &
+  SAMPLER=$!
+
+  say "Steps 1 to 3 are in the app window"
+  launch first || exit 1
+  echo "Work through steps 1 to 3 in the app window, then click Continue in Terminal there."
+  echo "Leave the app's window open until this script says it's done: closing it quits the app, and the"
+  echo "steps after it are skipped. The app opens twice more by itself later; leave those windows open too."
+  echo "(Or press Enter here to move on.)"
+  while app_running; do
+    [ "$(state_value handoff)" = 1 ] && break
+    # In a subshell: on bash 3.2, a Ctrl-C during read -t can leave its alarm set to go off in the cleanup.
+    if ( IFS= read -r -t 5 _ </dev/tty ); then break; fi
+    save first
+  done
+  save first
+
+  status_line_step first
+  if app_running && [ "$(state_value codex)" = busy ]; then
+    echo "Waiting for the ChatGPT check in the app to finish..."
+    for _ in $(seq 1 100); do
+      [ "$(state_value codex)" = busy ] || break
+      sleep 3
+    done
   fi
-fi
-if app_running && [ "$(state_value codex)" = busy ]; then
-  echo "Waiting for the ChatGPT check in the app to finish..."
-  for _ in $(seq 1 100); do
-    [ "$(state_value codex)" = busy ] || break
-    sleep 3
-  done
-fi
-save first
-quit_app
+  save first
+  quit_app
 
-say "Relaunching the app (it checks by itself; leave its window open)"
-if launch relaunch; then
-  for _ in $(seq 1 60); do
-    [ "$(state_value done)" = 1 ] && break
-    sleep 3
-  done
-  save relaunch
+  say "Relaunching the app (it checks by itself; leave its window open)"
+  if launch relaunch; then
+    for _ in $(seq 1 60); do
+      [ "$(state_value done)" = 1 ] && break
+      sleep 3
+    done
+    save relaunch
+  fi
+  quit_app
+
+  say "Installing build 2 over it, as an update would, and checking again (leave its window open)"
+  install_build 2
+  if launch update; then
+    for _ in $(seq 1 60); do
+      [ "$(state_value done)" = 1 ] && break
+      sleep 3
+    done
+    [ "$(state_value done)" = 1 ] && SIGNED_OUT=1
+    save update
+  fi
+  quit_app
+  kill "$SAMPLER" 2>/dev/null
+  SAMPLER=""
 fi
-quit_app
 
-say "Installing build 2 over it, as an update would, and checking again (leave its window open)"
-install_build 2
-if launch update; then
-  for _ in $(seq 1 60); do
-    [ "$(state_value done)" = 1 ] && break
-    sleep 3
-  done
-  [ "$(state_value done)" = 1 ] && SIGNED_OUT=1
-  save update
-fi
-quit_app
-kill "$SAMPLER" 2>/dev/null
-SAMPLER=""
+collect_logs
 
-say "Collecting logs"
-/usr/bin/log show --style ndjson --start "$LOG_START" --predicate 'subsystem == "AIUsageStoreTest"' > "$OUT/unified-log.ndjson" 2>/dev/null
-/usr/bin/log show --style compact --start "$LOG_START" \
-  --predicate 'eventMessage CONTAINS[c] "deny" AND (eventMessage CONTAINS "codex-app-serv" OR eventMessage CONTAINS "AI Usage Store" OR eventMessage CONTAINS "StoreTestWidget")' \
-  > "$OUT/sandbox-denials.txt" 2>/dev/null   # the kernel's messages can cut a process name short
-/usr/bin/log show --style compact --start "$LOG_START" --predicate 'process == "nehelper"' 2>/dev/null |
-  grep -i 'AIUsageStoreTest\|Store Test\|StoreTestWidget' > "$OUT/local-network.txt"
-mkdir -p "$OUT/crashes"
-find "$HOME/Library/Logs/DiagnosticReports" -maxdepth 1 -newer "$OUT/system.txt" \
-  \( -name 'codex-app-serv*' -o -name 'AI Usage Store*' -o -name 'StoreTestWidget*' \) \
-  -exec cp {} "$OUT/crashes/" \; 2>/dev/null
-pluginkit -m -v -i "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist").Widget" > "$OUT/pluginkit.txt" 2>&1
-
-for phase in first relaunch update; do
+for phase in first relaunch update statusline; do
   [ -f "$OUT/$phase-summary.txt" ] && { cat "$OUT/$phase-summary.txt"; echo; }
 done > "$OUT/summary.txt"
+if [ "$MODE" = status-line ] && [ -f "$OUT/runner-notes.txt" ]; then
+  { echo "What this script recorded:"; sed 's/^/  /' "$OUT/runner-notes.txt"; } >> "$OUT/summary.txt"
+fi
 say "Summary"
 cat "$OUT/summary.txt"
 echo
 echo "All done. The results are in $OUT"
-echo "You can remove the Store Test widget now. Reply \"done\" in the thread."
+if [ "$MODE" = status-line ]; then
+  echo "Reply \"done\" in the thread."
+else
+  echo "You can remove the Store Test widget now. Reply \"done\" in the thread."
+fi

@@ -71,6 +71,18 @@ in a `local.env` file in the kit (it can also hold `LAN_URL=` for the network ch
 afterwards, also if the script is stopped. Everything it gathers goes to
 `results/<time>/` next to it, including the unified log, sandbox denials and any crash reports.
 
+Claude Code passes subscription limits to the status line only after Anthropic has replied, so the
+status line check needs one message answered in a Claude Code session while the script waits. The
+script can open a Terminal window with Claude Code for that, in an empty folder of the kit
+(`work.noindex/claude-session`): in your home folder, Claude Code's file index would walk Desktop,
+Documents and other apps' data, and macOS could ask about those, which has nothing to do with the
+test. If you didn't answer a message, the check is recorded as not tested rather than failed. To
+repeat only that check later, with the test app already installed (or build 2, if it isn't):
+
+```sh
+./run.sh --status-line
+```
+
 Afterwards, remove the Store Test widget, delete the app, and delete its containers: the app's and
 the widget's in `~/Library/Containers/` (named after their bundle IDs, starting
 `<prefix>.AIUsageStoreTest`) and the shared one in `~/Library/Group Containers/` (your team ID, a
