@@ -83,6 +83,11 @@ repeat only that check later, with the test app already installed (or build 2, i
 ./run.sh --status-line
 ```
 
+That rerun brings its own terminal window back in front of the app's and asks everything there; the
+app's steps 1 to 3 aren't needed. It doesn't sign out of ChatGPT, so if you sign in in the app during
+it anyway, that sign-in stays in the app's container until the next full run or until you delete the
+containers.
+
 Afterwards, remove the Store Test widget, delete the app, and delete its containers: the app's and
 the widget's in `~/Library/Containers/` (named after their bundle IDs, starting
 `<prefix>.AIUsageStoreTest`) and the shared one in `~/Library/Group Containers/` (your team ID, a

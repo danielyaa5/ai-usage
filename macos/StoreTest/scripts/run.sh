@@ -432,6 +432,25 @@ find_claude() {
   return 1
 }
 
+# The terminal app this script runs in, to bring back in front of the test app's window: the app opens
+# on top, and its Continue button can't raise a terminal. Over SSH there's nothing to raise.
+terminal_app_id() {
+  [ -n "${SSH_CONNECTION:-}${SSH_TTY:-}" ] && return 1
+  case "${TERM_PROGRAM:-}" in
+    Apple_Terminal) printf 'com.apple.Terminal' ;;
+    iTerm.app) printf 'com.googlecode.iterm2' ;;
+    *) [ -n "${__CFBundleIdentifier:-}" ] || return 1; printf '%s' "$__CFBundleIdentifier" ;;
+  esac
+}
+
+front_terminal() {
+  local id
+  id=$(terminal_app_id) || return 0
+  sleep 1   # after the app has finished coming to the front
+  open -b "$id" >/dev/null 2>&1 || true
+  printf '\a' >/dev/tty 2>/dev/null || true
+}
+
 # Claude Code runs in an empty folder of the kit's, not your home folder, where reading the folder
 # could make macOS ask about Desktop, Documents or Downloads, which has nothing to do with this test.
 CLAUDE_SESSION_DIR="$KIT/work.noindex/claude-session"
@@ -730,8 +749,10 @@ if [ "$MODE" = status-line ]; then
   fi
   say "Opening the test app"
   launch first || exit 1
-  echo "Leave its window open until this script says it's done. Skip steps 1 to 3 in it this time:"
-  echo "only the status line is checked."
+  front_terminal
+  echo "The test app's window is open behind this one. Leave it open until this script says it's done,"
+  echo "but don't use it this time: skip its steps 1 to 3 and its Continue button. Everything for this"
+  echo "check happens here, in this window."
   status_line_step statusline
   save statusline
   quit_app
@@ -751,7 +772,10 @@ else
   echo "steps after it are skipped. The app opens twice more by itself later; leave those windows open too."
   echo "(Or press Enter here to move on.)"
   while app_running; do
-    [ "$(state_value handoff)" = 1 ] && break
+    if [ "$(state_value handoff)" = 1 ]; then
+      front_terminal
+      break
+    fi
     # In a subshell: on bash 3.2, a Ctrl-C during read -t can leave its alarm set to go off in the cleanup.
     if ( IFS= read -r -t 5 _ </dev/tty ); then break; fi
     save first
@@ -807,6 +831,12 @@ cat "$OUT/summary.txt"
 echo
 echo "All done. The results are in $OUT"
 if [ "$MODE" = status-line ]; then
+  # Only the full run's last step signs the test out of ChatGPT.
+  if grep -q '"id":"codex.login","status":"passed"' "$OUT/statusline.json" 2>/dev/null; then
+    echo "You signed in to ChatGPT in the test app this time. That sign-in stays in the app's container"
+    echo "until the next full run, which signs out first, or until you delete the app's containers (see"
+    echo "README.md)."
+  fi
   echo "Reply \"done\" in the thread."
 else
   echo "You can remove the Store Test widget now. Reply \"done\" in the thread."
