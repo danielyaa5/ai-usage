@@ -18,6 +18,14 @@ The menu bar app and desktop widgets work on Apple silicon Macs running macOS 14
 
 History covers activity recorded on this Mac. A connected tool with empty history shows no recorded requests. Signing in for limits alone does not supply historic token totals. An API-equivalent estimate uses the bundled price table and excludes requests whose model has no listed price.
 
+## Google usage with Antigravity
+
+1. On the Mac where you use the Antigravity app or its CLI, open **AI Usage → Sources → This Mac**. Click **Connect…** beside **Antigravity**.
+2. Select the **.gemini** folder in your home folder and click **Connect**. The picker shows hidden folders. You can also press **Shift–Command–G** and enter `~/.gemini`. If there is no history yet, complete a request in Antigravity, let it save the conversation, then click **Refresh now** in AI Usage.
+3. Add **AI usage totals** to see requests, tokens, and estimated API value across the sources you connected. For Antigravity’s own seven-day totals, add a medium or larger **AI plan limits** widget, edit it, and choose **Google AI (Antigravity)**. Local widgets group the models used in Antigravity together.
+
+**Remaining quota and per-model detail.** To see the percentage left and reset times that Google reports, sign in to Antigravity and leave it running. Install the optional AI Usage dashboard on that same Mac using the [dashboard installation steps](../README.md#install). In the Mac app, choose **Sources → Dashboard**, enter `localhost:8796`, and click **Save and read**. The **AI plan limits** widget can now show Google's available quota windows. The dashboard page also has a **By model and effort** table for comparing individual models.
+
 ## Other sources
 
 **Demo** uses fictional data and works offline. **Dashboard** reads an AI Usage server at an address you supply, including a path such as `my-server.local:8088/ai-usage/`. This mode also supports live Antigravity limits and server-side background job attribution. Existing installations with a saved dashboard keep that selection when upgraded.
