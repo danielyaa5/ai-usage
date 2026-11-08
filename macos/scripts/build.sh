@@ -2,6 +2,7 @@
 # Build "AI Usage.app" with its widgets and sign it with your Apple Development certificate.
 #
 #   macos/scripts/build.sh        # -> macos/build.noindex/AI Usage.app
+#   macos/scripts/build.sh --fresh-install   # Separate first-run app, settings, widgets and links
 #
 # Reads DEVELOPMENT_TEAM and AI_USAGE_BUNDLE_PREFIX from the environment or macos/Local.xcconfig,
 # and SIGN_IDENTITY (a certificate name or SHA-1) when the team has more than one certificate.
@@ -57,14 +58,27 @@ fi
 
 LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 OUT=build.noindex
+DISPLAY_NAME="AI Usage"
+URL_SCHEME=aiusage
+case "${1:-}" in
+  --fresh-install)
+    OUT="$OUT/FreshInstall"
+    PREFIX="$PREFIX.freshinstall"
+    DISPLAY_NAME="AI Usage Fresh Install"
+    URL_SCHEME=aiusage-fresh-install
+    ;;
+  "") ;;
+  *) echo "Usage: $0 [--fresh-install]" >&2; exit 1 ;;
+esac
 DERIVED="$OUT/DerivedData"
-APP="$OUT/AI Usage.app"
+APP="$OUT/$DISPLAY_NAME.app"
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
 xcodegen generate --spec project.yml --quiet
 xcodebuild -project AIUsage.xcodeproj -scheme AIUsage -configuration Release -destination 'platform=macOS' \
   -derivedDataPath "$DERIVED" DEVELOPMENT_TEAM="$TEAM" AI_USAGE_BUNDLE_PREFIX="$PREFIX" \
+  AI_USAGE_DISPLAY_NAME="$DISPLAY_NAME" AI_USAGE_URL_SCHEME="$URL_SCHEME" \
   ARCHS=arm64 CODE_SIGNING_ALLOWED=NO build -quiet
 
 # Keep one copy: LaunchServices and the widget gallery get confused by several.

@@ -332,7 +332,7 @@ struct FreshnessNote: View {
     var body: some View {
         if let note = entry.freshnessNote {
             if entry.server == SharedStore.localURL {
-                Link(destination: URL(string: "aiusage://refresh")!) { label(note) }
+                Link(destination: AppLink.refresh.url) { label(note) }
                     .help("Open AI Usage and refresh local history")
             } else {
                 Button(intent: RefreshUsageIntent()) { label(note) }
@@ -909,7 +909,7 @@ struct SinglePlanSmall: View {
     @ViewBuilder
     private func windows(captions: Bool, palette: Palette) -> some View {
         if plan.windows.isEmpty {
-            Text("No limit reading yet.").font(.system(size: 11)).foregroundStyle(palette.muted)
+            Text(entry.missingLimits(for: plan)).font(.system(size: 11)).foregroundStyle(palette.muted)
         } else if plan.hasGroups {
             let labelWidth = (plan.windows.map { textWidth($0.shortLabel, size: 9.5) }.max() ?? 0) + 2
             let percentWidth = percentSlot(size: 10.5)
@@ -973,7 +973,7 @@ struct SinglePlanWide: View {
                 }
             }
             if plan.windows.isEmpty {
-                Text("No limit reading yet.").font(.system(size: 11)).foregroundStyle(palette.muted)
+                Text(entry.missingLimits(for: plan)).font(.system(size: 11)).foregroundStyle(palette.muted)
             } else {
                 ForEach(grouped(plan.windows)) { group in
                     VStack(alignment: .leading, spacing: medium ? 2 : 4) {
@@ -1004,7 +1004,7 @@ struct SinglePlanWide: View {
                 }
             } else {
                 // The medium size drops the value when a warning and the freshness note both need a line.
-                if !medium || !(note && plan.warning != nil) {
+                if entry.summary?.hasHistory != false, !medium || !(note && plan.warning != nil) {
                     value(palette)
                 }
                 if plan.warning != nil, !(medium && note) {
@@ -1206,8 +1206,13 @@ struct UsageWidgetView: View {
         if entry.summary?.hasHistory == false {
             VStack(alignment: .leading, spacing: 6) {
                 Image(systemName: "folder")
-                Text("Connect usage history").font(.headline)
-                Text("Choose a tool’s folder in AI Usage to see requests and tokens.").font(.caption)
+                if entry.server == SharedStore.localURL || entry.server == SharedStore.demoURL {
+                    Text("Connect usage history").font(.headline)
+                    Text("Choose a tool’s folder in AI Usage to see requests and tokens.").font(.caption)
+                } else {
+                    Text("Quota only").font(.headline)
+                    Text("Choose This Mac in AI Usage to see recorded requests and tokens.").font(.caption)
+                }
             }
         } else if let summary = entry.summary {
             let palette = Palette(scheme: scheme)

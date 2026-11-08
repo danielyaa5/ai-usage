@@ -4,10 +4,12 @@
 <dict>
 	<key>AIUsageAppGroup</key>
 	<string>$(AI_USAGE_APP_GROUP)</string>
+	<key>AIUsageURLScheme</key>
+	<string>$(AI_USAGE_URL_SCHEME)</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-	<string>AI Usage</string>
+	<string>$(AI_USAGE_DISPLAY_NAME)</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>

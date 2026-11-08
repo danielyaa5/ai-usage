@@ -9,6 +9,8 @@ struct SettingsView: View {
     @State private var address = ""
     @State private var previousCommand = ""
     @State private var statusOptions = false
+    @State private var googleGuide: GoogleSetupGuide.Topic?
+    @State private var googleAction: GoogleSetupGuide.Topic?
     @State private var openAtLogin = LoginItem.isEnabled
     @AppStorage("showMenuBarIcon") private var showIcon = true
 
@@ -75,6 +77,12 @@ struct SettingsView: View {
         }
         .frame(width: 580, height: 600)
         .onAppear { address = SharedStore.loadConfig().server?.absoluteString ?? "" }
+        .sheet(item: $googleGuide, onDismiss: applyGoogleAction) { topic in
+            GoogleSetupGuide(topic: topic, localSource: model.source == .local) { action in
+                googleAction = action
+                googleGuide = nil
+            }
+        }
     }
 
     @ViewBuilder private var localSetup: some View {
@@ -82,11 +90,14 @@ struct SettingsView: View {
             ForEach(HistoryProvider.allCases, id:\.self) { provider in
                 HStack {
                     VStack(alignment:.leading, spacing:3) {
-                        Text(provider.title).fontWeight(.medium)
+                        Text(provider == .antigravity ? "Google Antigravity" : provider.title).fontWeight(.medium)
                         Text(local.messages[provider] ?? (local.selected.contains(provider) ? "Connected" : provider.folder + " folder"))
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
+                    if provider == .antigravity {
+                        Button("Google setup…") { googleGuide = .usage }
+                    }
                     Button(local.selected.contains(provider) ? "Choose again…" : "Connect…") { local.pick(provider) }
                         .accessibilityIdentifier("history-" + provider.rawValue)
                     if local.selected.contains(provider) {
@@ -140,7 +151,7 @@ struct SettingsView: View {
                 }
             }
         } header: { Text("Account limits") }
-        footer: { Text("Codex history can also contain a recent limit reading. Antigravity history supplies usage totals. Live Antigravity limits require a connected dashboard.") }
+        footer: { Text("Codex history can also contain a recent limit reading. For Google’s remaining quota, open Google setup above.") }
         Button("View my widgets") { model.settingsTab = "Widgets" }
     }
 
@@ -148,12 +159,26 @@ struct SettingsView: View {
         Section("Your dashboard") {
             TextField("Address", text:$address, prompt:Text("my-mac.local:8796")).onSubmit(saveAddress)
             Button("Save and read") { saveAddress() }
+            Button("Google quota setup…") { googleGuide = .quota }
             if let issue = model.limits?.error { Text(issue).foregroundStyle(.secondary) }
         }
         Text("Use this option if you already run an AI Usage dashboard. This Mac works independently.")
             .font(.callout).foregroundStyle(.secondary)
     }
     private func saveAddress() { local.notice = model.setServer(address) }
+
+    private func applyGoogleAction() {
+        guard let action = googleAction else { return }
+        googleAction = nil
+        switch action {
+        case .usage:
+            if model.source == .local { local.pick(.antigravity) }
+            else { model.setSource(.local) }
+        case .quota:
+            address = GoogleSetupGuide.dashboardAddress
+            saveAddress()
+        }
+    }
 
     @ViewBuilder private var widgetPreview: some View {
         Section(model.source == .demo ? "Demo · sample data" : "Current widget readings") {

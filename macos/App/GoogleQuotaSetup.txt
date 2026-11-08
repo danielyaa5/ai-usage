@@ -1,0 +1,61 @@
+(
+  set -e
+  python3 -c 'import sys; sys.exit(sys.version_info[:2] < (3, 9))' || {
+    echo "Install Python 3.9 or newer, then paste this command again." >&2
+    exit 1
+  }
+  revision=5fbbee2bcdcb9abd5c4f4c2a84a3e94aad195dad
+  checksum=ebd84cacf33ef4c7f00b6a5fda058c69a6e333ba86a24630a4cc0b85007e9ccb
+  cache="$HOME/Library/Caches/AI Usage"
+  mkdir -p "$cache"
+  workdir=$(mktemp -d)
+  trap 'rm -rf "$workdir"' EXIT
+  archive="$cache/dashboard-$revision.tar.gz"
+  valid_archive() { printf '%s  %s\n' "$checksum" "$1" | shasum -a 256 -c --status; }
+  if ! valid_archive "$archive" 2>/dev/null; then
+    curl --fail --location --silent --show-error --proto '=https' \
+      "https://codeload.github.com/danielyaa5/ai-usage/tar.gz/$revision" -o "$workdir/download"
+    valid_archive "$workdir/download" || { echo "The dashboard download did not pass verification." >&2; exit 1; }
+    mv "$workdir/download" "$archive"
+  fi
+  tar -xzf "$archive" -C "$workdir" "ai-usage-$revision/ai_usage" "ai-usage-$revision/static"
+  cd "$workdir/ai-usage-$revision"
+  python3 - <<'PYTHON'
+from pathlib import Path
+from threading import Thread
+from time import sleep
+from http.server import ThreadingHTTPServer
+from ai_usage import antigravity_quota, store
+from ai_usage.server import Dashboard
+
+class GoogleQuota(Dashboard):
+    db_path = Path.cwd().parent / "quota.sqlite"
+
+    def send(self, status, body, *args, **kwargs):
+        if isinstance(body, dict) and "plans" in body and "totals" in body:
+            body = dict(body, has_history=False, plans=[p for p in body["plans"] if p["vendor"] == "google"])
+        super().send(status, body, *args, **kwargs)
+
+def refresh():
+    db = store.connect(GoogleQuota.db_path, init=False)
+    while True:
+        try:
+            antigravity_quota.poll(db)
+        except Exception:
+            print("Quota could not be read. Check that Antigravity is open and signed in.", flush=True)
+        sleep(300)
+
+try:
+    listener = ThreadingHTTPServer(("127.0.0.1", 8796), GoogleQuota)
+except OSError:
+    raise SystemExit("Port 8796 is in use. If your AI Usage dashboard is already running, connect to it in the app.")
+store.connect(GoogleQuota.db_path).close()
+Thread(target=refresh, daemon=True).start()
+print("Google quota reader ready at localhost:8796. Leave this window open. Control-C stops it.", flush=True)
+with listener:
+    try:
+        listener.serve_forever()
+    except KeyboardInterrupt:
+        pass
+PYTHON
+)

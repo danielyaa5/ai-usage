@@ -16,6 +16,10 @@ LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchSe
 [ -d "$SOURCE" ] || { echo "No app at $SOURCE; run scripts/build.sh first." >&2; exit 1; }
 codesign --verify --deep --strict "$SOURCE"
 ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$SOURCE/Contents/Info.plist")
+if [[ "$ID" == *.freshinstall.AIUsage ]]; then
+  echo "Copy this test build to /Applications/AI Usage Fresh Install.app and open it for first-run setup." >&2
+  exit 1
+fi
 if [ -d "$TARGET" ]; then
   OLD=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$TARGET/Contents/Info.plist" 2>/dev/null || true)
   if [ "$OLD" != "$ID" ]; then
@@ -24,7 +28,14 @@ if [ -d "$TARGET" ]; then
   fi
 fi
 
-pkill -x "AI Usage" 2>/dev/null && sleep 1 || true
+stop_installed_process() {
+  local pid executable
+  while read -r pid executable; do
+    if [[ "$executable" == "$1" ]]; then kill -TERM "$pid" 2>/dev/null || true; fi
+  done < <(ps -A -o pid=,comm=)
+}
+stop_installed_process "$TARGET/Contents/MacOS/AI Usage"
+sleep 1
 STAGE=$(mktemp -d /tmp/ai-usage-install.XXXXXX)
 ditto "$SOURCE" "$STAGE/AI Usage.app"
 rm -rf "$TARGET"
@@ -40,7 +51,7 @@ pluginkit -a "$TARGET/Contents/PlugIns/AIUsageWidgets.appex" || true
 # ten minutes.
 sleep 5
 # A widget extension still running from the old build keeps drawing with it until it quits.
-pkill -x AIUsageWidgets 2>/dev/null || true
+stop_installed_process "$TARGET/Contents/PlugIns/AIUsageWidgets.appex/Contents/MacOS/AIUsageWidgets"
 open -g -a "$TARGET"
 
 echo "Installed $TARGET"

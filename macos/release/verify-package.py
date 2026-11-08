@@ -38,9 +38,12 @@ with tempfile.TemporaryDirectory(prefix="aiusage-package-") as tmp:
     for target in (app, widget):
         info = plistlib.loads((target / "Contents/Info.plist").read_bytes())
         assert info["AIUsageAppGroup"] in groups
+        assert info["CFBundleDisplayName"] == "AI Usage" and info["AIUsageURLScheme"] == "aiusage"
+        if target == app:
+            assert info["CFBundleURLTypes"][0]["CFBundleURLSchemes"] == ["aiusage"]
         ats = info["NSAppTransportSecurity"]
         assert ats.get("NSAllowsLocalNetworking") and not ats.get("NSAllowsArbitraryLoads")
     files = {p.name for p in (app / "Contents/Resources").rglob("*")}
-    assert {"PrivacyInfo.xcprivacy", "Codex-LICENSE.txt", "Codex-NOTICE.txt", "Ratatui-LICENSE.txt", "codex-models.json", "pricing.json"} <= files
+    assert {"PrivacyInfo.xcprivacy", "Codex-LICENSE.txt", "Codex-NOTICE.txt", "Ratatui-LICENSE.txt", "codex-models.json", "pricing.json", "GoogleQuotaSetup.txt"} <= files
     assert not any("StoreTest" in p.name for p in app.rglob("*"))
     print("Verified the signed package, app, widget, sandboxed helper, local networking, shared group and resources.")

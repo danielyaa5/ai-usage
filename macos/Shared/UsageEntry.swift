@@ -2,6 +2,13 @@ import Foundation
 import WidgetKit
 import AIUsageKit
 
+enum AppLink: String {
+    case settings, dashboard, refresh
+
+    static let scheme = Bundle.main.object(forInfoDictionaryKey: "AIUsageURLScheme") as? String ?? "aiusage"
+    var url: URL { URL(string: Self.scheme + "://" + rawValue)! }
+}
+
 /// What every widget draws: the latest reading (fresh or cached), why a refresh failed, and which plan
 /// the widget was set to show (nil = all plans).
 struct UsageEntry: TimelineEntry {
@@ -62,9 +69,15 @@ struct UsageEntry: TimelineEntry {
         return summary.plans
     }
 
+    func missingLimits(for plan: Plan) -> String {
+        server == SharedStore.localURL && plan.vendor == "google"
+            ? "For quota, open Google setup in AI Usage." : "No limit reading yet."
+    }
+
     /// Where a click goes: the app, which opens the dashboard in the browser, or its settings when
     /// there's nothing to show.
     var tapURL: URL {
-        URL(string: summary == nil || server.scheme == "aiusage" ? "aiusage://settings" : "aiusage://dashboard")!
+        summary == nil || server == SharedStore.localURL || server == SharedStore.demoURL
+            ? AppLink.settings.url : AppLink.dashboard.url
     }
 }

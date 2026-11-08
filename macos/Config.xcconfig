@@ -9,6 +9,8 @@
 // or pass them to xcodebuild. scripts/build.sh reads the same file.
 
 AI_USAGE_BUNDLE_PREFIX = org.example
+AI_USAGE_DISPLAY_NAME = AI Usage
+AI_USAGE_URL_SCHEME = aiusage
 DEVELOPMENT_TEAM =
 
 #include? "Local.xcconfig"

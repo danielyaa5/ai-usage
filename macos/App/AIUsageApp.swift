@@ -47,7 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// aiusage://dashboard from a widget click opens the dashboard; aiusage://settings opens settings.
     func application(_ application: NSApplication, open urls: [URL]) {
-        for url in urls where url.scheme == "aiusage" {
+        for url in urls where url.scheme == AppLink.scheme {
             if url.host == "refresh" {
                 model.refresh()
                 SettingsWindow.show(model: model, tab: "Widgets")
@@ -92,7 +92,7 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
         if window == nil {
             let hosting = NSHostingController(rootView: SettingsView(model: model))
             let created = NSWindow(contentViewController: hosting)
-            created.title = "AI Usage"
+            created.title = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "AI Usage"
             created.styleMask = [.titled, .closable, .miniaturizable]
             created.isReleasedWhenClosed = false
             created.delegate = self

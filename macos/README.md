@@ -20,11 +20,13 @@ History covers activity recorded on this Mac. A connected tool with empty histor
 
 ## Google usage with Antigravity
 
-1. On the Mac where you use the Antigravity app or its CLI, open **AI Usage → Sources → This Mac**. Click **Connect…** beside **Antigravity**.
+1. On the Mac where you use the Antigravity app or its CLI, open **AI Usage → Sources → This Mac**. Click **Google setup…** beside **Google Antigravity**. **Local usage** explains the folder and widget choices and can open the picker for you.
 2. Select the **.gemini** folder in your home folder and click **Connect**. The picker shows hidden folders. You can also press **Shift–Command–G** and enter `~/.gemini`. If there is no history yet, complete a request in Antigravity, let it save the conversation, then click **Refresh now** in AI Usage.
 3. Add **AI usage totals** to see requests, tokens, and estimated API value across the sources you connected. For Antigravity’s own seven-day totals, add a medium or larger **AI plan limits** widget, edit it, and choose **Google AI (Antigravity)**. Local widgets group the models used in Antigravity together.
 
-**Remaining quota and per-model detail.** To see the percentage left and reset times that Google reports, sign in to Antigravity and leave it running. Install the optional AI Usage dashboard on that same Mac using the [dashboard installation steps](../README.md#install). In the Mac app, choose **Sources → Dashboard**, enter `localhost:8796`, and click **Save and read**. The **AI plan limits** widget can now show Google's available quota windows. The dashboard page also has a **By model and effort** table for comparing individual models.
+**Remaining quota.** In **Google setup… → Remaining quota**, sign in to the Antigravity desktop app and leave it running. If you already have an AI Usage dashboard running on this Mac, click **Connect to localhost:8796**. Otherwise the guide has a **Copy Terminal command** button. With Python 3.9 or newer, paste that command into Terminal and press Return. It downloads and verifies a pinned dashboard source archive, serves Google's quota readings only on your Mac, and exits when you press Control-C. Run the command again when you want to restart it. The first check can take a few minutes. In **AI plan limits**, choose **Google AI (Antigravity)** for the available percentages and reset times. Return to **Sources → This Mac** for your saved history.
+
+You can also open this guide from **Sources → Dashboard → Google quota setup…**. With a [full dashboard](../README.md#install), the same dashboard can supply both history and live limits, with individual models in its **By model and effort** table.
 
 ## Other sources
 
@@ -42,6 +44,8 @@ AI_USAGE_BUNDLE_PREFIX = com.example.you
 ```
 
 From the repository root, run `macos/scripts/build.sh` and `macos/scripts/install.sh` for a local Apple Development build. The build downloads a pinned, checksum-verified, Apple-silicon Codex helper from OpenAI and checks its original signature before signing it for the app sandbox. The helper ships inside the app. Its notices are in the app resources.
+
+For an isolated first-run test, build with `macos/scripts/build.sh --fresh-install`, then copy **AI Usage Fresh Install.app** from `macos/build.noindex/FreshInstall` to Applications and open it. It has its own folder permissions, preferences, widget data and links. Select **AI Usage Fresh Install** in the widget gallery. The first-run window appears the first time you launch that identity.
 
 Run `macos/release/archive.sh` to archive, export and verify a local Mac App Store installer package. It uses Xcode’s configured developer account. See the [release files](release/README.md) and [privacy policy](../docs/privacy.md).
 
