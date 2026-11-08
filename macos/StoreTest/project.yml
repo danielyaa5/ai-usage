@@ -27,6 +27,7 @@ targets:
       - path: App
         excludes:
           - Info.plist
+      - path: ../ProviderSupport
       - path: Shared
     dependencies:
       - target: StoreTestWidget

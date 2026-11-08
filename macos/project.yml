@@ -14,7 +14,8 @@ settings:
   base:
     SWIFT_VERSION: "5.0"
     MARKETING_VERSION: "1.0"
-    CURRENT_PROJECT_VERSION: "1"
+    CURRENT_PROJECT_VERSION: "2"
+    ARCHS: arm64
     CODE_SIGN_STYLE: Automatic
     ENABLE_HARDENED_RUNTIME: YES
     DEAD_CODE_STRIPPING: YES
@@ -31,6 +32,13 @@ targets:
       - path: App
         excludes:
           - Info.plist
+      - path: ProviderSupport
+      - path: Notices
+        buildPhase: resources
+      - path: PrivacyInfo.xcprivacy
+        buildPhase: resources
+      - path: ../ai_usage/pricing.json
+        buildPhase: resources
       - path: Shared
       - path: Assets.xcassets
     dependencies:
@@ -46,6 +54,10 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         CODE_SIGN_ENTITLEMENTS: App/AIUsage.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    postBuildScripts:
+      - name: Embed signed ChatGPT helper
+        script: '"$SRCROOT/scripts/embed-helper.sh"'
+        basedOnDependencyAnalysis: false
     scheme: {}
 
   AIUsageWidgets:

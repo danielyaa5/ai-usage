@@ -63,11 +63,6 @@ struct HTTPResponse: Sendable {
         return HTTPResponse(status: status, contentType: "application/json", body: body)
     }
 
-    static func encoded<T: Encodable>(_ value: T, status: Int = 200) -> HTTPResponse {
-        let body = (try? StoreTestShared.encoder.encode(value)) ?? Data("{}".utf8)
-        return HTTPResponse(status: status, contentType: "application/json", body: body)
-    }
-
     static func text(_ text: String, status: Int = 200) -> HTTPResponse {
         HTTPResponse(status: status, contentType: "text/plain; charset=utf-8", body: Data(text.utf8))
     }

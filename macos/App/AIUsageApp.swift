@@ -39,9 +39,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         RefreshUsageIntent.inApp = { [weak self] in self?.model.refresh() }
         model.start()
-        LoginItem.registerOnFirstLaunch()
-        // First run: ask for the dashboard address.
-        if SharedStore.loadConfig().server == nil {
+        if !UserDefaults.standard.bool(forKey: "setupShown") && SharedStore.loadConfig().source == .local {
+            UserDefaults.standard.set(true, forKey: "setupShown")
             SettingsWindow.show(model: model)
         }
     }
@@ -49,7 +48,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// aiusage://dashboard from a widget click opens the dashboard; aiusage://settings opens settings.
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls where url.scheme == "aiusage" {
-            if url.host == "settings" {
+            if url.host == "refresh" {
+                model.refresh()
+                SettingsWindow.show(model: model, tab: "Widgets")
+            } else if url.host == "settings" {
                 SettingsWindow.show(model: model)
             } else {
                 model.openDashboard()
@@ -65,41 +67,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-/// The app opens at login, so the widgets keep getting new readings after a restart.
+/// Login launch is an explicit user preference.
 enum LoginItem {
     static var isEnabled: Bool { SMAppService.mainApp.status == .enabled }
 
     static func set(_ enabled: Bool) throws {
         if enabled { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
     }
-
-    /// Once, from /Applications only, so a build being tested elsewhere never adds itself.
-    static func registerOnFirstLaunch() {
-        let defaults = UserDefaults.standard
-        guard !defaults.bool(forKey: "loginItemOffered"),
-              Bundle.main.bundleURL.path.hasPrefix("/Applications/") else { return }
-        defaults.set(true, forKey: "loginItemOffered")
-        try? set(true)
-    }
 }
 
 /// Settings in an AppKit window: the app has no Dock icon and no SwiftUI window scenes, and a widget
 /// click or a second launch must be able to open it.
 @MainActor
-enum SettingsWindow {
-    private static var window: NSWindow?
+final class SettingsWindow: NSObject, NSWindowDelegate {
+    private static let controller = SettingsWindow()
+    private var window: NSWindow?
 
-    static func show(model: AppModel) {
+    static func show(model: AppModel, tab: String = "Sources") {
+        controller.present(model: model, tab: tab)
+    }
+
+    private func present(model: AppModel, tab: String) {
+        model.settingsTab = tab
         if window == nil {
             let hosting = NSHostingController(rootView: SettingsView(model: model))
             let created = NSWindow(contentViewController: hosting)
             created.title = "AI Usage"
             created.styleMask = [.titled, .closable, .miniaturizable]
             created.isReleasedWhenClosed = false
+            created.delegate = self
             created.center()
             window = created
         }
         NSApp.activate()
         window?.makeKeyAndOrderFront(nil)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        window?.contentViewController = nil
+        window = nil
     }
 }

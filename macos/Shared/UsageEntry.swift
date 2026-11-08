@@ -65,6 +65,6 @@ struct UsageEntry: TimelineEntry {
     /// Where a click goes: the app, which opens the dashboard in the browser, or its settings when
     /// there's nothing to show.
     var tapURL: URL {
-        URL(string: summary == nil ? "aiusage://settings" : "aiusage://dashboard")!
+        URL(string: summary == nil || server.scheme == "aiusage" ? "aiusage://settings" : "aiusage://dashboard")!
     }
 }

@@ -175,7 +175,7 @@ struct UsageTotalsWidget: Widget {
             TotalsEntryView(entry: entry)
         }
         .configurationDisplayName("AI usage totals")
-        .description("API-equivalent value, model requests, tokens and background jobs for today, 7 or 30 days.")
+        .description("API-equivalent value, requests and tokens for today, 7 or 30 days.")
         .supportedFamilies([.systemSmall, .systemMedium])
     }
 }
@@ -185,7 +185,12 @@ struct LimitsEntryView: View {
     @Environment(\.widgetFamily) private var family
 
     var body: some View {
-        MeasuredWidget { LimitsWidgetView(entry: entry, family: family) }
+        MeasuredWidget {
+            VStack(alignment: .leading, spacing: 2) {
+                if entry.server == SharedStore.demoURL { Text("Sample data").font(.caption2.bold()).foregroundStyle(.secondary) }
+                LimitsWidgetView(entry: entry, family: family)
+            }
+        }
             .modifier(WidgetBackground())
             .widgetURL(entry.tapURL)
     }
@@ -196,7 +201,12 @@ struct TotalsEntryView: View {
     @Environment(\.widgetFamily) private var family
 
     var body: some View {
-        MeasuredWidget { UsageWidgetView(entry: entry, family: family) }
+        MeasuredWidget {
+            VStack(alignment: .leading, spacing: 2) {
+                if entry.server == SharedStore.demoURL { Text("Sample data").font(.caption2.bold()).foregroundStyle(.secondary) }
+                UsageWidgetView(entry: entry, family: family)
+            }
+        }
             .modifier(WidgetBackground())
             .widgetURL(entry.tapURL)
     }

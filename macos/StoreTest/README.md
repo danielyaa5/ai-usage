@@ -27,7 +27,7 @@ Sandbox, the way a store app would.
    read-only security-scoped bookmark and reads it again after a relaunch and after an update. It
    counts entries and reads 64 bytes of one log file, and keeps none of it.
 4. **Claude limits from the status line.** Claude Code runs a `statusLine` command with a line of
-   JSON on its input. The snippet (`App/StatusLineSnippet.swift`) sends only `rate_limits` from it to
+   JSON on its input. The snippet (`../ProviderSupport/StatusLineSnippet.swift`) sends only `rate_limits` from it to
    the app on 127.0.0.1 in the background, then runs your own status line command with the full
    input, so your status line looks the same.
 

@@ -10,7 +10,19 @@ final class AppModel: ObservableObject {
     @Published private(set) var readings: [String: Reading] = [:]
     @Published private(set) var refreshing = false
     @Published private(set) var lastAttempt: Date?
-    @Published private(set) var server: URL = SharedStore.server
+    @Published private(set) var server: URL
+
+    @Published private(set) var source: SharedStore.Source
+    @Published var settingsTab = "Sources"
+    let local: LocalSources
+
+    init(sampleSetup: Bool = false) {
+        let config = sampleSetup ? SharedStore.Config() : SharedStore.loadConfig()
+        source = config.source
+        server = config.server ?? UsageClient.defaultServer
+        local = LocalSources(defaults: sampleSetup ? UserDefaults(suiteName: "store-preview-" + UUID().uuidString)! : .standard)
+    }
+    private var refreshAgain = false
 
     /// How often the dashboard is read while it answers. Failures back off to 30 minutes.
     static let interval: TimeInterval = 5 * 60
@@ -26,14 +38,17 @@ final class AppModel: ObservableObject {
 
     /// What the menu bar panel and the settings preview draw.
     func entry(vendor: String? = nil, range: String = UsageRanges.limits, now: Date = Date()) -> UsageEntry {
-        UsageEntry(date: now, reading: readings[range] ?? Reading(summary: nil, fetchedAt: nil, error: nil, server: server),
+        UsageEntry(date: now, reading: readings[range] ?? Reading(summary: nil, fetchedAt: nil, error: nil, server: source == .local ? SharedStore.localURL : server),
                    vendor: vendor)
     }
 
     func start() {
-        // Show the kept readings at once, then read the dashboard.
+        local.changed = { [weak self] in self?.refresh() }
+        local.activate(source == .local)
+        // A dashboard reading is never shown in local or demonstration mode.
         for range in UsageRanges.all {
-            if let kept = SharedStore.cached(range: range) {
+            if source == .local { readings[range] = SharedStore.localReading(range: range) }
+            if source == .dashboard, let kept = SharedStore.cached(range: range) {
                 readings[range] = Reading(summary: kept.summary, fetchedAt: kept.fetchedAt, error: nil, server: server)
             }
         }
@@ -43,7 +58,7 @@ final class AppModel: ObservableObject {
 
     /// Reads every period now unless a read is already running (one at a time).
     func refresh() {
-        guard !refreshing else { return }
+        guard !refreshing else { refreshAgain = true; return }
         refreshing = true
         timer?.invalidate()
         let run = generation
@@ -53,6 +68,13 @@ final class AppModel: ObservableObject {
     private func readAll(run: Int) async {
         let now = Date()
         var results: [String: Reading] = [:]
+        if source == .local {
+            if let snapshot = await local.collect(now: now), run == generation {
+                do { try SharedStore.publishLocal(snapshot) }
+                catch { local.notice = "Could not share the reading with the widget. Reopen AI Usage and try again." }
+            }
+        }
+        guard run == generation else { return }
         await withTaskGroup(of: (String, Reading).self) { group in
             for range in UsageRanges.all {
                 group.addTask { (range, await Reading.load(range: range, record: true, now: now)) }
@@ -74,7 +96,7 @@ final class AppModel: ObservableObject {
             shown = signature
             reloadWidgets(at: now)
         }
-        schedule()
+        if refreshAgain { refreshAgain = false; refresh() } else { schedule() }
     }
 
     private func schedule() {
@@ -104,7 +126,7 @@ final class AppModel: ObservableObject {
                 }.joined(separator: ",") + ":" + (plan.warning ?? "") + ":\(Int(plan.cost))"
             }.joined(separator: ";")
             let totals = summary.totals
-            return "\(range):\(plans):\(Int(totals.cost)):\(totals.requests / 10):\(totals.tokens / 1_000_000):"
+            return "\(range):\(plans):\(Int(totals.cost)):\(totals.requests):\(totals.tokens):"
                 + "\(Int(totals.backgroundCost)):\(reading.error != nil)"
         }.joined(separator: "|")
     }
@@ -117,11 +139,27 @@ final class AppModel: ObservableObject {
             return "Enter an address such as my-mac.local:8796."
         }
         do {
-            try SharedStore.save(.init(server: url))
+            try SharedStore.save(.init(server: url, source: .dashboard))
         } catch {
             return "Couldn't save the address: \(error.localizedDescription)"
         }
+        change(to: .dashboard, server: url)
+        return nil
+    }
+
+    func setSource(_ value: SharedStore.Source) {
+        guard source != value else { return }
+        let address = SharedStore.loadConfig().server
+        do { try SharedStore.save(.init(server: address, source: value)) }
+        catch { local.notice = "Could not save the source."; return }
+        change(to: value, server: address ?? UsageClient.defaultServer)
+    }
+
+    private func change(to value: SharedStore.Source, server url: URL) {
+        source = value
         server = url
+        local.activate(value == .local)
+        refreshAgain = false
         generation += 1
         readings = [:]
         shown = nil
@@ -129,10 +167,10 @@ final class AppModel: ObservableObject {
         reloadWidgets()
         refreshing = false
         refresh()
-        return nil
     }
 
     func openDashboard() {
-        NSWorkspace.shared.open(server)
+        if source == .dashboard, let address = SharedStore.loadConfig().server { NSWorkspace.shared.open(address) }
+        else { SettingsWindow.show(model: self, tab: "Widgets") }
     }
 }

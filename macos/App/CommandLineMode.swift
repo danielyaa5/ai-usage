@@ -13,7 +13,7 @@ import AIUsageKit
 /// what it read. --render-previews draws each widget layout in light and dark mode to PNG files, from
 /// the dashboard or, with --sample, from made-up numbers.
 enum CommandLineMode {
-    static let flags = ["--set-server", "--refresh-once", "--render-previews", "--help"]
+    static let flags = ["--set-server", "--refresh-once", "--render-previews", "--render-store-assets", "--help"]
     static let arguments = Array(CommandLine.arguments.dropFirst())
     static let isActive = arguments.contains { flags.contains($0) }
 
@@ -37,6 +37,12 @@ enum CommandLineMode {
             print("Saved \(model.server.absoluteString)")
         }
         if arguments.contains("--refresh-once") {
+            if SharedStore.loadConfig().source == .local {
+                model.local.activate(true, receiveStatusLine: false)
+                guard let snapshot = await model.local.collect(now: Date()) else { return 1 }
+                do { try SharedStore.publishLocal(snapshot) }
+                catch { print("Could not share the local reading."); return 1 }
+            }
             var failed = false
             for range in UsageRanges.all {
                 let reading = await Reading.load(range: range, record: true)
@@ -51,6 +57,16 @@ enum CommandLineMode {
             print("Shared container: \(SharedStore.folder?.path ?? "unavailable")")
             WidgetCenter.shared.reloadAllTimelines()
             return failed ? 1 : 0
+        }
+        if let path = value(after: "--render-store-assets") {
+            do {
+                let folder = URL(fileURLWithPath: path, isDirectory: true)
+                try await StoreImages.render(to: folder)
+                return 0
+            } catch {
+                print("Could not render the store assets: \(error.localizedDescription)")
+                return 1
+            }
         }
         if let folder = value(after: "--render-previews") {
             do {

@@ -26,7 +26,7 @@ final class CodexClient: @unchecked Sendable {
     private let input = Pipe()
     private let output = Pipe()
     private let errors = Pipe()
-    private let queue = DispatchQueue(label: "AIUsageStoreTest.codex")
+    private let queue = DispatchQueue(label: "AIUsage.codex")
     private var nextID = 1
     private var pending: [Int: (Result<[String: Any], Error>) -> Void] = [:]
     private var methods: [Int: String] = [:]
@@ -219,7 +219,7 @@ final class CodexClient: @unchecked Sendable {
         if let method, let rawID = object["id"] {
             // The server asks the client something (an approval, say); this test never agrees.
             onServerRequest?(method)
-            _ = write(["id": rawID, "error": ["code": -32601, "message": "Not supported by AI Usage Store Test"]])
+            _ = write(["id": rawID, "error": ["code": -32601, "message": "Not supported by AI Usage"]])
             return
         }
         if let method {

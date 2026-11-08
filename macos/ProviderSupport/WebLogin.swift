@@ -8,7 +8,7 @@ import AuthenticationServices
 final class WebLogin: NSObject, ASWebAuthenticationPresentationContextProviding {
     /// A scheme nothing navigates to. It has to be a valid one: Chrome on macOS 14.0 to 14.3 can't
     /// handle a session without one.
-    static let callbackScheme = "aiusage-storetest"
+    static var callbackScheme: String { Bundle.main.bundleIdentifier?.hasSuffix("StoreTest") == true ? "aiusage-storetest" : "aiusage-auth-finished" }
 
     private let anchor: ASPresentationAnchor
     private var session: ASWebAuthenticationSession?

@@ -14,7 +14,7 @@ struct MenuPanel: View {
                 .frame(width: 332, height: 350, alignment: .topLeading)
             Divider()
             HStack(spacing: 8) {
-                Button("Open dashboard") { model.openDashboard() }
+                Button(model.source == .dashboard ? "Open dashboard" : "View usage") { model.openDashboard() }
                 Button {
                     model.refresh()
                 } label: {
@@ -24,7 +24,7 @@ struct MenuPanel: View {
                         Image(systemName: "arrow.clockwise")
                     }
                 }
-                .help("Read the dashboard now")
+                .help("Refresh usage now")
                 .disabled(model.refreshing)
                 Spacer()
                 Button("Settings…") { SettingsWindow.show(model: model) }

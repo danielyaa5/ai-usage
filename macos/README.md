@@ -1,115 +1,44 @@
-# AI Usage widgets for macOS
+# AI Usage for Mac
 
-Desktop and Notification Center widgets for the AI Usage dashboard, with a small menu bar app that
-keeps them current.
+The menu bar app and desktop widgets work on Apple silicon Macs running macOS 14 or later. The default source is **This Mac**. The app bundles its ChatGPT helper. End users do not need Xcode, Python, a separate server, or a system installation of Codex to sign in and see ChatGPT limits.
 
-- **AI plan limits** (small, medium, large, extra large): what's left of each plan's 5-hour and
-  weekly limits, when each resets, and any reader problem the dashboard reports (in full where it
-  fits, such as "The Antigravity app is not running on this Mac", or as "Antigravity: app not
-  running"). From the medium size up, the plans line up in a table with a column per limit. Edit the
-  widget to show one plan in more detail.
-- **AI usage totals** (small, medium): API-equivalent value, model requests, tokens processed and
-  background jobs, for today, the last 7 days or the last 30 days.
+## First launch
 
-Limits read 6 or more hours ago, and windows whose reset time has passed, are drawn in gray with a
-faded bar, and the widget says how old they are ("as of 7 h ago", "reset due") where it has room.
-When the dashboard can't be reached the widgets keep the last reading and say how old it is
-("Offline · from 14:05", or "Refresh needed" after 45 minutes); click that line to read again.
-Clicking a widget opens the dashboard.
+1. Open AI Usage. In **Sources → This Mac**, click **Connect…** beside a tool you use. Select its folder in the macOS picker. Hidden folders are visible. A custom tool folder is also supported when it contains the expected history directories.
+2. When the app reports recorded requests, click **View my widgets**. Control-click the desktop, choose **Edit Widgets**, search for **AI Usage**, and add **AI usage totals** or **AI plan limits**. Control-click a placed widget to choose its period or plan.
+3. Keep the menu bar app running for automatic updates. **Open at login** is optional under **Widgets → Preferences**. Reopening the app restores your read-only folder permissions. **Refresh now** reads the sources again.
 
-## How it works
+| Source | What becomes available |
+|---|---|
+| Claude Code history (`.claude`) | Requests, tokens and estimated API value from recorded assistant usage |
+| Codex history (`.codex`) | Recorded requests and tokens in current and archived sessions, plus limit windows when a session includes them |
+| Antigravity history (`.gemini`) | Recorded usage in the IDE and CLI conversation databases. Only checkpointed metadata is read. |
+| Sign in with ChatGPT | Account-wide limit readings directly from OpenAI, including on a Mac with no Codex history |
+| Claude Code status line | The windows Claude reports after a reply, such as weekly or five-hour limits. Choose **Set up…**, copy the supplied setting, merge it into your Claude Code settings, and send a message. An existing status-line command can be preserved. AI Usage never edits Claude Code settings. |
 
-The dashboard serves a small JSON reply for the widgets at `/api/widget?range=today|7d|30d` (see the
-main README). The menu bar app reads it every 5 minutes, backing off to 30 minutes while it fails,
-and keeps the reply in an App Group container it shares with the widget extension. It asks macOS to
-redraw the widgets when something they show changes. Each widget timeline uses the shared reply when
-it is under 6 minutes old and otherwise reads the dashboard itself, so the widgets still work when the
-app isn't running. When the app's read fails it notes that in the container as well, so the widgets
-say "Offline" as soon as the app can't reach the dashboard either, and clicking that line makes them
-read the dashboard themselves. Nothing else is stored, and no credentials are involved.
+History covers activity recorded on this Mac. A connected tool with empty history shows no recorded requests. Signing in for limits alone does not supply historic token totals. An API-equivalent estimate uses the bundled price table and excludes requests whose model has no listed price.
 
-The app opens at login (turn that off in its settings) and can hide its menu bar icon.
+## Other sources
 
-## Build and install
+**Demo** uses fictional data and works offline. **Dashboard** reads an AI Usage server at an address you supply, including a path such as `my-server.local:8088/ai-usage/`. This mode also supports live Antigravity limits and server-side background job attribution. Existing installations with a saved dashboard keep that selection when upgraded.
 
-You need macOS 14 or later, Xcode, [XcodeGen](https://github.com/yonaskolb/XcodeGen)
-(`brew install xcodegen`) and an Apple Development certificate (a free Apple account's personal team
-works). The app and its widgets must be signed by the same team to share their App Group.
+The app refreshes on a five-minute timer. Widgets read shared summaries in the app group. In local mode only the app holds folder permissions and runs provider connections. When the app has been closed long enough for a reading to age, open it from the widget to refresh. In dashboard mode a widget can also refresh directly from the server. macOS schedules timeline redraws.
 
-1. Create `macos/Local.xcconfig` (git ignores it) with your team ID and a bundle ID prefix of your own:
+## Build
 
-   ```
-   DEVELOPMENT_TEAM = ABCDE12345
-   AI_USAGE_BUNDLE_PREFIX = com.example.you
-   ```
+Use Xcode and XcodeGen. Put your development team and bundle prefix in the untracked `macos/Local.xcconfig`:
 
-2. Build, sign and install:
-
-   ```sh
-   macos/scripts/build.sh      # -> macos/build.noindex/AI Usage.app
-   macos/scripts/install.sh    # -> /Applications/AI Usage.app, started in the background
-   ```
-
-   `build.sh` builds with Xcode unsigned, then signs the extension and the app with your certificate.
-   Run it in a Terminal on the Mac: over SSH, `codesign` usually can't use the login keychain.
-
-3. Click the chart icon in the menu bar, choose **Settings…**, and enter the dashboard's address as
-   you open it in a browser: `localhost:8796` on the Mac that runs AI Usage, or that Mac's name or
-   address from another one (`my-mac.local:8796`). A path works too, such as
-   `my-server.local:8088/ai-usage/`. The first time the app reads another Mac, macOS asks to let it
-   find devices on your local network; allow it, or the widgets stay empty. The widgets share the
-   app's permission. A Tailscale address (`100.x.y.z` or `name.tailnet.ts.net`) needs no such
-   permission.
-
-4. Control-click the desktop, choose **Edit Widgets**, and search for AI Usage.
-
-You can also open `AIUsage.xcodeproj` (after `xcodegen generate` in `macos/`) and build in Xcode
-with automatic signing.
-
-## Command line
-
-The app's executable takes a few options for scripting and testing; with any of them it shows no
-menu bar icon and quits when done:
-
-```sh
-APP="/Applications/AI Usage.app/Contents/MacOS/AI Usage"
-"$APP" --set-server my-mac.local:8796                 # save the dashboard address
-"$APP" --refresh-once                                 # read every period now and redraw the widgets
-"$APP" --render-previews ~/Desktop/widgets --sample   # every layout, light and dark, as PNG files
+```
+DEVELOPMENT_TEAM = ABCDE12345
+AI_USAGE_BUNDLE_PREFIX = com.example.you
 ```
 
-`--render-previews` draws the same views the widgets use, at fixed widget sizes (see Test), from the
-dashboard or (with `--sample`) from made-up numbers, which is what screenshots should use. It also
-draws the states that need the most room: `-offline`, and with `--sample`, `-problems` (reader errors
-and old readings), `-problems-offline` and `-old`.
+From the repository root, run `macos/scripts/build.sh` and `macos/scripts/install.sh` for a local Apple Development build. The build downloads a pinned, checksum-verified, Apple-silicon Codex helper from OpenAI and checks its original signature before signing it for the app sandbox. The helper ships inside the app. Its notices are in the app resources.
 
-## Test
+Run `macos/release/archive.sh` to archive, export and verify a local Mac App Store installer package. It uses Xcode’s configured developer account. See the [release files](release/README.md) and [privacy policy](../docs/privacy.md).
 
-```sh
-cd macos && swift test
-```
+## Verify
 
-The tests cover the reply format, the shared cache (a newer reading is never replaced by an older
-one, a cached reading keeps its original time, and the app's failures and refresh requests stop the
-widgets reusing it), addresses, formatting, reader errors in a few words and the age of old readings.
-They don't show that a placed widget draws; check that on the desktop after installing.
+Run `swift test --package-path macos` and `python3 -m unittest discover -s tests -t .`. The Swift tests include clean-source selection, legacy dashboard migration, local reading and cache isolation, token deduplication, partial log writes, read-only Antigravity accounting, and limits without history.
 
-The renders use the sizes macOS gave widgets on a MacBook Air (small 164 points square, medium 344 by
-164, large 344 square, extra large 704 by 344, with 18-point margins), which are smaller than the
-iPhone sizes. Other Macs can differ, so placed widgets measure the space they get, and each timeline
-logs the widget's real size: `/usr/bin/log show --last 1h --predicate 'category == "timeline"'` (in
-zsh, plain `log` is a different command).
-
-## Troubleshooting
-
-- **AI Usage isn't in the widget gallery.** Open the app once from /Applications. Keep a single copy
-  of the app: remove other builds (`mdfind "kMDItemCFBundleIdentifier == '*AIUsage'"` lists them).
-  Then `killall chronod NotificationCenter` and look again.
-- **"Can't reach AI Usage".** Check the address in a browser. If the browser works but the widgets
-  don't, see System Settings › Privacy & Security › Local Network and make sure AI Usage is on.
-  Right after an update macOS can refuse its connections for several minutes even so, and the app
-  tries again by itself. If it keeps failing, or an update turned it off, switching it off and on
-  again restores it.
-- **Old numbers.** The widgets redraw within a few minutes of the app reading something new, but
-  macOS decides exactly when. The menu bar panel always shows the latest reading.
-- **Logs.** `/usr/bin/log stream --predicate 'process == "AIUsageWidgets" OR process == "AI Usage"'`.
+The app supports `--refresh-once`, `--set-server ADDRESS`, and `--render-previews FOLDER --sample`. For rendering, choose a folder inside the signed app’s own sandbox container. `--render-store-assets FOLDER` renders the listing artwork from fictional data and a clean setup view. Neither rendering command installs widgets. Use a placed widget to check delivery and freshness.

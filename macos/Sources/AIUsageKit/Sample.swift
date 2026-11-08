@@ -29,3 +29,31 @@ public extension UsageSummary {
                                            topBackgroundJob: TopJob(job: "Nightly report", cost: 73.39)))
     }
 }
+
+public extension UsageSummary {
+    /// The user-visible demo models a standalone Mac. Antigravity contributes history only.
+    static func localSample(range: String, now: Date) -> UsageSummary {
+        var sample = UsageSummary.sample(now: now)
+        sample.host = "Demo"
+        sample.hasHistory = true
+        sample.range = range
+        sample.rangeLabel = ["today": "Today", "7d": "Last 7 days", "30d": "Last 30 days"][range] ?? range
+        let factor = range == "today" ? 0.12 : range == "30d" ? 3.85 : 1.0
+        for i in sample.plans.indices {
+            sample.plans[i].title = sample.plans[i].short
+            sample.plans[i].monthlyUsd = nil
+            sample.plans[i].proratedUsd = nil
+            sample.plans[i].requests = Int(Double(sample.plans[i].requests) * factor)
+            sample.plans[i].tokens = Int(Double(sample.plans[i].tokens) * factor)
+            sample.plans[i].cost *= factor
+            if sample.plans[i].vendor == "google" { sample.plans[i].windows = [] }
+        }
+        sample.totals.requests = sample.plans.reduce(0) { $0 + $1.requests }
+        sample.totals.tokens = sample.plans.reduce(0) { $0 + $1.tokens }
+        sample.totals.cost = sample.plans.reduce(0) { $0 + $1.cost }
+        sample.totals.output = Int(Double(sample.totals.output) * factor)
+        sample.totals.backgroundCost = 0
+        sample.totals.topBackgroundJob = nil
+        return sample
+    }
+}

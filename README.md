@@ -4,7 +4,7 @@ A local dashboard for the Claude Code, Codex (ChatGPT) and Antigravity (Gemini) 
 the plan limits that matter on flat-rate subscriptions, what the same requests would cost on API
 keys, and which jobs, apps, models and effort levels used them.
 
-It runs on your Mac, reads the logs these tools already write, and sends nothing anywhere.
+The [standalone Mac app](macos/README.md) can read local tool history and show it in desktop widgets without installing this dashboard. The Python dashboard is also available for a more detailed breakdown or for sharing readings across your own Macs.
 
 ![The dashboard with fictional data: plan limits for Claude, ChatGPT and Antigravity, totals for the last 7 days and a cost chart](docs/dashboard.png)
 
@@ -19,8 +19,7 @@ It runs on your Mac, reads the logs these tools already write, and sends nothing
   models, tokens and last request.
 - **Models and effort**: cost per request for each model and reasoning effort, next to the
   providers' list prices.
-- **Mac widgets**: plan limits and period totals on the desktop, from this dashboard on any Mac on
-  your network (see [`macos/`](macos/README.md)).
+- **Mac widgets**: plan limits and period totals on the desktop, from this Mac or a dashboard you choose. See the [Mac setup guide](macos/README.md).
 
 ![Jobs, models and effort tables in dark mode, with fictional data](docs/dashboard-details-dark.png)
 
@@ -128,7 +127,7 @@ in the proxy, since the dashboard then sees the proxy's loopback address.
 `/api/widget?range=7d` (or `today`, `30d`, `all`) returns a small, display-ready summary: each plan
 with its limit windows (percent left, level, reset and reading times) and any reader error (in full,
 and in a few words for narrow layouts), and the period's totals. The macOS widgets in
-[`macos/`](macos/README.md) read it.
+[Mac app](macos/README.md) uses this endpoint in Dashboard mode. This Mac mode supplies summaries directly from local history.
 
 ## Operate
 

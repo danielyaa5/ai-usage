@@ -15,10 +15,17 @@ import Security
 public enum SharedStore {
     public static let appGroup: String? = Bundle.main.object(forInfoDictionaryKey: "AIUsageAppGroup") as? String
 
+    public enum Source: String, Codable, CaseIterable, Sendable { case local, dashboard, demo }
+
     public struct Config: Codable, Equatable, Sendable {
         public var server: URL?
 
-        public init(server: URL? = nil) {
+        // Older installs saved only the address. Preserve their chosen dashboard on update.
+        private var selectedSource: Source?
+        public var source: Source { selectedSource ?? (server == nil ? .local : .dashboard) }
+
+        public init(server: URL? = nil, source: Source? = nil) {
+            self.selectedSource = source
             self.server = server
         }
     }
@@ -79,6 +86,32 @@ public enum SharedStore {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try JSONEncoder().encode(config).write(to: folder.appendingPathComponent("config.json"), options: .atomic)
         if changedServer { clearCache() }
+    }
+
+    public static let localURL = URL(string: "aiusage://local")!
+    public static let demoURL = URL(string: "aiusage://demo")!
+
+    /// Only sanitized summaries cross from the sandboxed app to its widgets. All three
+    /// periods change together so a widget cannot read part of an imported history.
+    public struct LocalSnapshot: Codable, Sendable {
+        public var summaries: [String: UsageSummary]
+        public var issue: String?
+        public init(summaries: [String: UsageSummary], issue: String? = nil) {
+            self.summaries = summaries
+            self.issue = issue
+        }
+    }
+
+    public static func publishLocal(_ snapshot: LocalSnapshot) throws {
+        guard let folder else { throw CocoaError(.fileNoSuchFile) }
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try cacheEncoder.encode(snapshot).write(to: folder.appendingPathComponent("this-mac.json"), options: .atomic)
+    }
+
+    public static func localReading(range: String) -> Reading {
+        let snapshot = read(LocalSnapshot.self, "this-mac.json")
+        let summary = snapshot?.summaries[range]
+        return Reading(summary: summary, fetchedAt: summary?.generatedAt, error: snapshot?.issue, server: localURL)
     }
 
     public static func clearCache() {
@@ -174,7 +207,18 @@ public struct Reading: Sendable {
     /// asked for since. The app passes `record`, so its failures and successes are recorded.
     public static func load(range: String, reuse: TimeInterval = 0, tolerate: TimeInterval = 0,
                             timeout: TimeInterval = 15, record: Bool = false, now: Date = Date()) async -> Reading {
-        let server = SharedStore.server
+        let config = SharedStore.loadConfig()
+        switch config.source {
+        case .local:
+            return SharedStore.localReading(range: range)
+        case .demo:
+            let sample = UsageSummary.localSample(range: range, now: now)
+            return Reading(summary: sample, fetchedAt: now, error: nil, server: SharedStore.demoURL)
+        case .dashboard: break
+        }
+        guard let server = config.server else {
+            return Reading(summary: nil, fetchedAt: nil, error: "Enter a dashboard address in AI Usage.", server: UsageClient.defaultServer)
+        }
         let kept = SharedStore.cached(range: range)
         let since = { (date: Date?) -> Bool in
             guard let date else { return false }
@@ -187,10 +231,12 @@ public struct Reading: Sendable {
         }
         do {
             let summary = try await UsageClient.fetch(server: server, range: range, timeout: timeout)
+            guard SharedStore.loadConfig() == config else { return await load(range: range, now: now) }
             SharedStore.cache(summary, range: range, at: now)
             if record { SharedStore.clearFailure(range: range) }
             return Reading(summary: summary, fetchedAt: now, error: nil, server: server)
         } catch {
+            guard SharedStore.loadConfig() == config else { return await load(range: range, now: now) }
             let message = error.localizedDescription
             if record { SharedStore.recordFailure(message, range: range, at: now) }
             let fallback = SharedStore.cached(range: range)

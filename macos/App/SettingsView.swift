@@ -4,85 +4,164 @@ import AIUsageKit
 
 struct SettingsView: View {
     @ObservedObject var model: AppModel
+    @ObservedObject private var local: LocalSources
+    private var tab: String { model.settingsTab }
     @State private var address = ""
-    @State private var problem: String?
-    @State private var saved = false
+    @State private var previousCommand = ""
+    @State private var statusOptions = false
     @State private var openAtLogin = LoginItem.isEnabled
     @AppStorage("showMenuBarIcon") private var showIcon = true
 
-    var body: some View {
-        Form {
-            Section {
-                TextField("Address", text: $address, prompt: Text("my-mac.local:8796"))
-                    .onSubmit(save)
-                HStack(spacing: 8) {
-                    Button("Save and read", action: save)
-                        .keyboardShortcut(.defaultAction)
-                    status
-                }
-            } header: {
-                Text("AI Usage dashboard")
-            } footer: {
-                Text("The dashboard's address as you open it in a browser, such as my-mac.local:8796 or "
-                     + "localhost:8796 on the Mac that runs it. A path works too: my-server.local:8088/ai-usage/.")
-                    .foregroundStyle(.secondary)
-            }
+    init(model: AppModel) {
+        self.model = model
+        self.local = model.local
+    }
 
-            Section {
-                Toggle("Open at login", isOn: $openAtLogin)
-                    .onChange(of: openAtLogin) { _, enabled in
-                        do {
-                            try LoginItem.set(enabled)
-                        } catch {
-                            problem = "Couldn't change the login item: \(error.localizedDescription)"
-                            openAtLogin = LoginItem.isEnabled
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("AI Usage").font(.title.bold())
+                    Text(tab == "Sources" ? "Choose where your readings come from." : "Plan limits and recent usage on your desktop.")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Picker("View", selection: $model.settingsTab) {
+                    Text("Sources").tag("Sources")
+                    Text("Widgets").tag("Widgets")
+                }.labelsHidden().pickerStyle(.segmented).fixedSize()
+            }.padding(20)
+            Divider()
+            Form {
+                if tab == "Sources" {
+                    Picker("Source", selection: Binding(get: { model.source }, set: model.setSource)) {
+                        Text("This Mac").tag(SharedStore.Source.local)
+                        Text("Dashboard").tag(SharedStore.Source.dashboard)
+                        Text("Demo").tag(SharedStore.Source.demo)
+                    }.pickerStyle(.segmented)
+                    switch model.source {
+                    case .local: localSetup
+                    case .dashboard: dashboardSetup
+                    case .demo:
+                        Section("Sample data") {
+                            Text("The app and widgets now show fictional readings. Switch to This Mac to see your own usage.")
+                            Button("Preview widgets") { model.settingsTab = "Widgets" }
                         }
                     }
-                Toggle("Show in menu bar", isOn: $showIcon)
-            } footer: {
-                Text("The app reads the dashboard every 5 minutes for the widgets. With the menu bar icon "
-                     + "hidden, open AI Usage again to get back here.")
-                    .foregroundStyle(.secondary)
-            }
-
-            Section {
-                WidgetCard(family: .systemMedium) {
-                    LimitsWidgetView(entry: model.entry(), family: .systemMedium)
+                } else {
+                    widgetPreview
+                    Section("Preferences") {
+                        Toggle("Open at login", isOn: Binding(get: { openAtLogin }, set: { enabled in
+                            do { try LoginItem.set(enabled); openAtLogin = LoginItem.isEnabled }
+                            catch { local.notice = "Could not change Open at login. Check Login Items in System Settings." }
+                        }))
+                        Toggle("Show icon in menu bar", isOn: $showIcon)
+                    }
                 }
-                .frame(maxWidth: .infinity)
-            } header: {
-                Text("Widgets")
-            } footer: {
-                Text("To add them, Control-click the desktop, choose Edit Widgets, and search for AI Usage. "
-                     + "Edit a widget to pick one plan or the period it totals.")
-                    .foregroundStyle(.secondary)
-            }
+                if let notice = local.notice {
+                    Section {
+                        Text(notice).textSelection(.enabled)
+                        Button("Dismiss") { local.notice = nil }
+                    }
+                }
+            }.formStyle(.grouped)
+            Divider()
+            HStack {
+                if model.refreshing { ProgressView().controlSize(.small); Text("Reading usage…") }
+                else if let date = model.lastAttempt { Text("Last checked \(date.formatted(date:.omitted,time:.shortened))") }
+                Spacer()
+                Button("Refresh now") { model.refresh() }.disabled(model.refreshing)
+            }.font(.caption).foregroundStyle(.secondary).padding(.horizontal,20).padding(.vertical,10)
         }
-        .formStyle(.grouped)
-        .frame(width: 440)
-        .fixedSize(horizontal: false, vertical: true)
+        .frame(width: 580, height: 600)
         .onAppear { address = SharedStore.loadConfig().server?.absoluteString ?? "" }
     }
 
-    @ViewBuilder private var status: some View {
-        if let problem {
-            Text(problem).foregroundStyle(.red).font(.callout).lineLimit(3)
-        } else if model.refreshing {
-            ProgressView().controlSize(.small)
-        } else if saved, let reading = model.limits {
-            if let error = reading.error {
-                Text(error).foregroundStyle(.red).font(.callout).lineLimit(3)
-            } else if let summary = reading.summary {
-                Label("Read \(summary.host): \(summary.plans.count) plans", systemImage: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
-                    .font(.callout)
+    @ViewBuilder private var localSetup: some View {
+        Section {
+            ForEach(HistoryProvider.allCases, id:\.self) { provider in
+                HStack {
+                    VStack(alignment:.leading, spacing:3) {
+                        Text(provider.title).fontWeight(.medium)
+                        Text(local.messages[provider] ?? (local.selected.contains(provider) ? "Connected" : provider.folder + " folder"))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button(local.selected.contains(provider) ? "Choose again…" : "Connect…") { local.pick(provider) }
+                        .accessibilityIdentifier("history-" + provider.rawValue)
+                    if local.selected.contains(provider) {
+                        Button { local.forget(provider) } label: { Image(systemName:"xmark.circle") }
+                            .help("Disconnect " + provider.title).accessibilityLabel("Disconnect " + provider.title)
+                    }
+                }
             }
-        }
+        } header: { Text("Usage on this Mac") }
+        footer: { Text("Choose a tool’s folder to count its recorded requests and tokens. Folder access is read-only. Usage history stays on this Mac.") }
+
+        Section {
+            HStack {
+                VStack(alignment:.leading,spacing:3) {
+                    Text("ChatGPT limits").fontWeight(.medium)
+                    Text(local.chatConnected ? "Connected to OpenAI" : "Sign in to see the limits on your plan.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                if local.accountBusy {
+                    ProgressView().controlSize(.small)
+                    if !local.chatConnected { Button("Cancel") { local.cancelLogin() } }
+                } else {
+                    Button(local.chatConnected ? "Sign out" : "Sign in with ChatGPT…") { local.toggleAccount() }
+                }
+            }
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Claude Code limits").fontWeight(.medium)
+                    Text(local.statusLineEnabled ? "Status-line receiver enabled" : "Use the limits Claude Code provides after a reply.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button(local.statusLineEnabled ? (statusOptions ? "Hide" : "Manage…") : "Set up…") {
+                    if !local.statusLineEnabled { local.toggleStatusLine(true) }
+                    statusOptions.toggle()
+                }.accessibilityIdentifier("claude-limits-setup")
+            }
+            if statusOptions && local.statusLineEnabled {
+                Text("Merge the copied statusLine setting into your Claude Code settings.json. If you already use a status line, paste its command below first. Then send a message in Claude Code.")
+                    .font(.caption).foregroundStyle(.secondary)
+                TextField("Existing status-line command (optional)", text: $previousCommand)
+                HStack {
+                    Button("Copy statusLine setting") { local.copyStatusLine(previousCommand: previousCommand) }
+                        .disabled(!local.statusLineReady)
+                    Spacer()
+                    Button("Turn off receiver") {
+                        local.toggleStatusLine(false)
+                        statusOptions = false
+                    }
+                }
+            }
+        } header: { Text("Account limits") }
+        footer: { Text("Codex history can also contain a recent limit reading. Antigravity history supplies usage totals. Live Antigravity limits require a connected dashboard.") }
+        Button("View my widgets") { model.settingsTab = "Widgets" }
     }
 
-    private func save() {
-        problem = model.setServer(address)
-        saved = problem == nil
-        if saved { address = model.server.absoluteString }
+    @ViewBuilder private var dashboardSetup: some View {
+        Section("Your dashboard") {
+            TextField("Address", text:$address, prompt:Text("my-mac.local:8796")).onSubmit(saveAddress)
+            Button("Save and read") { saveAddress() }
+            if let issue = model.limits?.error { Text(issue).foregroundStyle(.secondary) }
+        }
+        Text("Use this option if you already run an AI Usage dashboard. This Mac works independently.")
+            .font(.callout).foregroundStyle(.secondary)
+    }
+    private func saveAddress() { local.notice = model.setServer(address) }
+
+    @ViewBuilder private var widgetPreview: some View {
+        Section(model.source == .demo ? "Demo · sample data" : "Current widget readings") {
+            WidgetCard(family:.systemMedium) { LimitsWidgetView(entry:model.entry(),family:.systemMedium) }
+            WidgetCard(family:.systemMedium) { UsageWidgetView(entry:model.entry(),family:.systemMedium) }
+        }
+        Section("Add to your desktop") {
+            Text("Control-click your desktop, choose Edit Widgets, then search for AI Usage. Add AI plan limits or AI usage totals. Control-click a placed widget to choose its plan or time period.")
+        }
     }
 }

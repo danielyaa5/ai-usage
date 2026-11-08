@@ -270,7 +270,7 @@ final class TestModel: ObservableObject {
         facts["seconds"] = String(format: "%.1f", Date().timeIntervalSince(started))
         if let first, attempts > 1 { facts["firstAttempt"] = first.summary }
         if let host = url.host {
-            facts["tcpProbe"] = await URLCheck.probe(host: host, port: UInt16(exactly: url.port ?? 80) ?? 80)
+            facts["tcpProbe"] = await PortProbe.run(host: host, port: UInt16(exactly: url.port ?? 80) ?? 80)
         }
         let detail = last.ok ? "\(last.summary) after \(attempts) attempt\(attempts == 1 ? "" : "s")" : last.summary
         results.set(id("net.lan"), test: 2, "App → your network", last.ok ? .passed : .failed, detail, facts: facts)

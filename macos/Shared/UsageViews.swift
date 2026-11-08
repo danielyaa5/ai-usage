@@ -331,19 +331,23 @@ struct FreshnessNote: View {
 
     var body: some View {
         if let note = entry.freshnessNote {
-            Button(intent: RefreshUsageIntent()) {
-                HStack(spacing: 3) {
-                    Image(systemName: entry.error != nil ? "wifi.exclamationmark" : "arrow.clockwise")
-                    Text(note)
-                }
-                .font(.system(size: 9.5, weight: .medium))
-                .foregroundStyle(Palette(scheme: scheme).stale)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
+            if entry.server == SharedStore.localURL {
+                Link(destination: URL(string: "aiusage://refresh")!) { label(note) }
+                    .help("Open AI Usage and refresh local history")
+            } else {
+                Button(intent: RefreshUsageIntent()) { label(note) }
+                    .buttonStyle(.plain)
+                    .help(entry.error ?? "Refresh the dashboard")
             }
-            .buttonStyle(.plain)
-            .help(entry.error ?? "Read the dashboard again")
         }
+    }
+
+    private func label(_ note: String) -> some View {
+        Label(note, systemImage: entry.error == nil ? "arrow.clockwise" : "wifi.exclamationmark")
+            .font(.system(size: 9.5, weight: .medium))
+            .foregroundStyle(Palette(scheme: scheme).stale)
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
     }
 }
 
@@ -438,27 +442,27 @@ struct UnavailableView: View {
             Image(systemName: "gauge.with.dots.needle.33percent")
                 .font(.system(size: 20))
                 .foregroundStyle(palette.muted)
-            Text("Can't reach AI Usage")
+            Text(entry.server == SharedStore.localURL ? "Connect a source" : "Can't reach AI Usage")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(palette.primary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.85)
-            Text(hostAndPort(entry.server))
+            Text(entry.server == SharedStore.localURL ? "This Mac" : hostAndPort(entry.server))
                 .font(.system(size: 10).monospaced())
                 .foregroundStyle(palette.secondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
-            Text("Click to check the dashboard address in AI Usage.")
+            Text(entry.server == SharedStore.localURL ? "Open AI Usage to connect your account or usage history." : "Click to check the dashboard address in AI Usage.")
                 .font(.system(size: 10))
                 .foregroundStyle(palette.muted)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
-            Button(intent: RefreshUsageIntent()) {
+            if entry.server != SharedStore.localURL { Button(intent: RefreshUsageIntent()) {
                 Label("Try again", systemImage: "arrow.clockwise")
                     .font(.system(size: 10, weight: .medium))
             }
             .buttonStyle(.bordered)
-            .controlSize(.small)
+            .controlSize(.small) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -754,7 +758,7 @@ struct AllPlansSmall: View {
             HStack(alignment: .firstTextBaseline, spacing: 0) {
                 PlanTitle(plan: plan, size: titleSize)
                 Spacer(minLength: Self.gap)
-                Text("no reading").font(.system(size: 10)).foregroundStyle(palette.muted)
+                Text(entry.server == SharedStore.localURL && plan.requests > 0 ? "\(plan.requests.formatted()) req" : "no reading").font(.system(size: 10)).foregroundStyle(palette.muted)
             }
         }
     }
@@ -1098,7 +1102,7 @@ struct AllPlansLarge: View {
                 WarningLines(plans: entry.plans, width: width, lines: warningLines)
             }
             Spacer(minLength: 8)
-            if let totals, let summary = entry.summary {
+            if let totals, let summary = entry.summary, summary.hasHistory != false {
                 TotalsSection(summary: summary, compact: totals == .compact)
             }
         }
@@ -1119,7 +1123,7 @@ struct Stat: Identifiable {
 /// The dashboard's four totals. The hints leave out the period, which every widget shows elsewhere.
 func stats(_ summary: UsageSummary) -> [Stat] {
     let t = summary.totals
-    return [
+    var result = [
         Stat(label: "API-equivalent value", short: "API value", value: Format.usd(t.cost),
              hint: t.unpriced > 0 ? "\(Format.grouped(t.unpriced)) requests unpriced" : "at API prices"),
         Stat(label: "Model requests", short: "Requests", value: Format.grouped(t.requests),
@@ -1128,6 +1132,10 @@ func stats(_ summary: UsageSummary) -> [Stat] {
         Stat(label: "Background jobs", short: "Background", value: Format.usd(t.backgroundCost),
              hint: t.topBackgroundJob.map { "top: \($0.job) (\(Format.usd($0.cost)))" } ?? "none in this period"),
     ]
+    if summary.hasHistory != nil {
+        result[3] = Stat(label: "Output tokens", short: "Output", value: Format.tokens(t.output), hint: "generated tokens")
+    }
+    return result
 }
 
 /// A total's name: the full one where it fits on a line, else the short one ("Requests").
@@ -1195,7 +1203,13 @@ struct UsageWidgetView: View {
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        if let summary = entry.summary {
+        if entry.summary?.hasHistory == false {
+            VStack(alignment: .leading, spacing: 6) {
+                Image(systemName: "folder")
+                Text("Connect usage history").font(.headline)
+                Text("Choose a tool’s folder in AI Usage to see requests and tokens.").font(.caption)
+            }
+        } else if let summary = entry.summary {
             let palette = Palette(scheme: scheme)
             let all = stats(summary)
             if family == .systemSmall {

@@ -8,6 +8,8 @@ public struct UsageSummary: Codable, Equatable, Sendable {
     public var rangeLabel: String
     public var lastScan: Date?
     public var plans: [Plan]
+    /// Older dashboards always include totals. A standalone limit source may have no history.
+    public var hasHistory: Bool?
     public var totals: Totals
 
     public init(generatedAt: Date, host: String, range: String, rangeLabel: String, lastScan: Date?,

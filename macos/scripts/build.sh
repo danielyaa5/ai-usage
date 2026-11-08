@@ -39,7 +39,7 @@ cert_team() {  # cert_team SHA1 -> the team (OU) of that certificate in your key
     /^SHA-1 hash:/ { keep = ($3 == hash) }
     keep && /BEGIN CERTIFICATE/ { printing = 1 }
     printing { print }
-    /END CERTIFICATE/ { if (printing) exit; printing = 0 }' |
+    /END CERTIFICATE/ { printing = 0 }' |
     openssl x509 -noout -subject 2>/dev/null | sed -n 's/.*OU *= *\([A-Z0-9]*\).*/\1/p'
 }
 
@@ -65,7 +65,7 @@ trap 'rm -rf "$WORK"' EXIT
 xcodegen generate --spec project.yml --quiet
 xcodebuild -project AIUsage.xcodeproj -scheme AIUsage -configuration Release -destination 'platform=macOS' \
   -derivedDataPath "$DERIVED" DEVELOPMENT_TEAM="$TEAM" AI_USAGE_BUNDLE_PREFIX="$PREFIX" \
-  CODE_SIGNING_ALLOWED=NO build -quiet
+  ARCHS=arm64 CODE_SIGNING_ALLOWED=NO build -quiet
 
 # Keep one copy: LaunchServices and the widget gallery get confused by several.
 BUILT="$DERIVED/Build/Products/Release/AI Usage.app"
@@ -82,7 +82,9 @@ esac
 sed "s/\$(AI_USAGE_APP_GROUP)/$GROUP/" Widget/AIUsageWidgets.entitlements > "$WORK/widgets.entitlements"
 sed "s/\$(AI_USAGE_APP_GROUP)/$GROUP/" App/AIUsage.entitlements > "$WORK/app.entitlements"
 
-# Inside out: the extension first, then the app that contains it.
+# Inside out: the inherited-sandbox helper, widget, and containing app.
+codesign --force --options runtime --timestamp=none --sign "$IDENTITY" \
+  --entitlements StoreTest/Helper/codex.entitlements "$APP/Contents/MacOS/codex-app-server"
 codesign --force --options runtime --timestamp=none --sign "$IDENTITY" \
   --entitlements "$WORK/widgets.entitlements" "$APP/Contents/PlugIns/AIUsageWidgets.appex"
 codesign --force --options runtime --timestamp=none --sign "$IDENTITY" \
