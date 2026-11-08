@@ -182,6 +182,41 @@ class CodexRolloutTest(Base):
         self.assertEqual((limit['window'], limit['used_pct'], limit['plan']), ('codex_primary', 64.0, 'pro'))
 
 
+class CheckpointPrivacyTest(Base):
+    def test_incremental_job_attribution_does_not_save_prompt_text(self):
+        prompt = 'TELEMETRY_JSON fictional private text'
+        claude = self.dir / 'projects' / 'session.jsonl'
+        codex = self.dir / 'codex' / 'sessions' / 'rollout-session.jsonl'
+        for path in (claude, codex):
+            path.parent.mkdir(parents=True)
+        claude.write_text(json.dumps({'type': 'user', 'sessionId': 'session',
+                                       'message': {'content': prompt}}) + '\n')
+        codex.write_text(json.dumps({'type': 'event_msg', 'payload': {
+            'type': 'user_message', 'message': prompt}}) + '\n')
+        with mock.patch.object(sources, 'CLAUDE_DESKTOP_SESSIONS', self.dir / 'desktop'), \
+                mock.patch.object(sources, 'CODEX_HOME', self.dir / 'codex'):
+            sources.scan_claude(self.db, claude.parent)
+            sources.scan_codex(self.db, codex.parent.parent)
+            self.assertEqual(store.file_state(self.db, claude)['state']['prompt_jobs']['session'],
+                             ['nightly-report', 'health monitor'])
+            self.assertEqual(store.file_state(self.db, codex)['state']['prompt_job'],
+                             ['nightly-report', 'health monitor'])
+            for (state,) in self.db.execute('SELECT state FROM files'):
+                self.assertNotIn(prompt, state)
+            with codex.open('a') as handle:
+                handle.write(json.dumps({'type': 'token_usage_record', 'timestamp': '2026-10-26T10:00:00Z',
+                    'payload': {'response_id': 'response', 'usage': {'input_tokens': 12}}}) + '\n')
+            sources.scan_codex(self.db, codex.parent.parent)
+            self.assertEqual(self.events()[0]['job'], 'nightly-report')
+
+    def test_upgrade_drops_legacy_checkpoints_including_missing_logs(self):
+        store.set_kv(self.db, 'scan_version', 3)
+        store.save_file_state(self.db, self.dir / 'removed.jsonl', 12, 1, 12, {'prompt': 'fictional text'})
+        sources.reattribute(self.db)
+        self.assertIsNone(store.file_state(self.db, self.dir / 'removed.jsonl'))
+        self.assertEqual(store.get_kv(self.db, 'scan_version'), sources.SCAN_VERSION)
+
+
 class AntigravityTest(Base):
     def make_db(self, path, prompt):
         con = sqlite3.connect(path)

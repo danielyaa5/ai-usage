@@ -42,6 +42,8 @@ def read_new_lines(db, path):
     except FileNotFoundError:
         return [], {}
     prev = file_state(db, path)
+    if prev and ('prompt' in prev['state'] or 'prompts' in prev['state']):
+        prev = None  # Rebuild legacy checkpoints using only derived job labels.
     if prev and prev['size'] == stat.st_size and prev['mtime'] == stat.st_mtime:
         return [], prev['state']
     offset = prev['offset'] if prev and stat.st_size >= prev['offset'] else 0
@@ -116,7 +118,7 @@ def claude_event(line, desktop, state):
     if info.get('task'):
         job, detail = jobs.scheduled(info['task']), info.get('title')
     else:
-        matched = jobs.from_prompt(state.get('prompts', {}).get(session))
+        matched = state.get('prompt_jobs', {}).get(session)
         if not matched and str(line.get('entrypoint', '')).startswith('sdk'):
             matched = jobs.from_cwd(cwd) or ('Claude Code (scripts)', None)
         job, detail = matched or ('Claude Code (interactive)', None)
@@ -137,16 +139,16 @@ def scan_claude(db, root=CLAUDE_PROJECTS):
         lines, state = read_new_lines(db, path)
         if not lines and '_pending' not in state:
             continue
-        prompts = state.setdefault('prompts', {})
+        prompt_jobs = state.setdefault('prompt_jobs', {})
         events = []
         for line in lines:
             if not isinstance(line, dict):
                 continue
             session = line.get('sessionId')
-            if line.get('type') == 'user' and session and session not in prompts and not line.get('isMeta'):
+            if line.get('type') == 'user' and session and session not in prompt_jobs and not line.get('isMeta'):
                 text = first_text((line.get('message') or {}).get('content'))
                 if text and not text.startswith('<'):
-                    prompts[session] = text[:400]
+                    prompt_jobs[session] = jobs.from_prompt(text[:400])
             if line.get('type') == 'assistant':
                 event = claude_event(line, desktop, state)
                 if event:
@@ -177,7 +179,7 @@ def codex_titles():
 def codex_job(state, titles):
     session = state.get('session')
     interactive = state.get('originator') not in ('codex_exec',) and state.get('source') != 'exec'
-    matched = jobs.from_prompt(state.get('prompt'))
+    matched = state.get('prompt_job')
     if not matched and not interactive:
         matched = jobs.from_cwd(state.get('cwd')) or ('Codex (scripts)', None)
     job, detail = matched or ('Codex (interactive)', None)
@@ -234,8 +236,10 @@ def scan_codex(db, home=CODEX_HOME):
                         if len(turns) > 200:
                             turns.pop(next(iter(turns)))
                 state['cwd'] = state.get('cwd') or payload.get('cwd')
-            elif kind == 'event_msg' and payload.get('type') == 'user_message' and not state.get('prompt'):
-                state['prompt'] = str(payload.get('message') or '')[:400]
+            elif kind == 'event_msg' and payload.get('type') == 'user_message' and 'prompt_job' not in state:
+                text = str(payload.get('message') or '')[:400]
+                if text:
+                    state['prompt_job'] = jobs.from_prompt(text)
             elif kind == 'token_usage_record' and isinstance(payload.get('usage'), dict):
                 state['records'] = True
                 model, effort = turns.get(payload.get('turn_id')) or [state.get('model') or 'unknown', state.get('effort')]
@@ -381,7 +385,7 @@ def dedupe(db):
     db.commit()
 
 
-SCAN_VERSION = 3  # bump when parsing changes so stored events are read again (2: effort, 3: model names)
+SCAN_VERSION = 4  # replace old prompt-bearing checkpoints; retain events from pruned logs
 
 
 def reattribute(db):
