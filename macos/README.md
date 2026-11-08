@@ -4,8 +4,8 @@ The menu bar app and desktop widgets work on Apple silicon Macs running macOS 14
 
 ## First launch
 
-1. Open AI Usage. In **Sources → This Mac**, click **Connect…** beside a tool you use. Select its folder in the macOS picker. Hidden folders are visible. A custom tool folder is also supported when it contains the expected history directories.
-2. When the app reports recorded requests, click **View my widgets**. Control-click the desktop, choose **Edit Widgets**, search for **AI Usage**, and add **AI usage totals** or **AI plan limits**. Control-click a placed widget to choose its period or plan.
+1. Open AI Usage. In **Sources → This Mac**, click **Connect…** beside a tool you use. Select its folder in your home folder. The picker shows hidden folders. You can also press **Shift–Command–G** and enter the folder path. A custom tool folder is supported when it contains the expected history directories.
+2. When the app reports recorded requests, click **View my widgets**. Control-click the desktop, choose **Edit Widgets** and search for **AI Usage**. **AI usage totals** combines the tools you connected. To see one plan’s seven-day totals, add a medium or larger **AI plan limits** widget, Control-click it and choose the plan, such as **Google AI (Antigravity)**.
 3. Keep the menu bar app running for automatic updates. **Open at login** is optional under **Widgets → Preferences**. Reopening the app restores your read-only folder permissions. **Refresh now** reads the sources again.
 
 | Source | What becomes available |
@@ -16,15 +16,11 @@ The menu bar app and desktop widgets work on Apple silicon Macs running macOS 14
 | Sign in with ChatGPT | Account-wide limit readings directly from OpenAI, including on a Mac with no Codex history |
 | Claude Code status line | The windows Claude reports after a reply, such as weekly or five-hour limits. Choose **Set up…**, copy the supplied setting, merge it into your Claude Code settings, and send a message. An existing status-line command can be preserved. AI Usage never edits Claude Code settings. |
 
-History covers activity recorded on this Mac. A connected tool with empty history shows no recorded requests. Signing in for limits alone does not supply historic token totals. An API-equivalent estimate uses the bundled price table and excludes requests whose model has no listed price.
+History covers activity recorded on this Mac. If there are no requests yet, complete a request in the connected tool, let it save and click **Refresh now**. Signing in for limits alone does not supply historic token totals. An API-equivalent estimate uses the bundled price table and excludes requests whose model has no listed price.
 
-## Google usage with Antigravity
+## Google Antigravity quota
 
-1. On the Mac where you use the Antigravity app or its CLI, open **AI Usage → Sources → This Mac**. Click **Google setup…** beside **Google Antigravity**. **Local usage** explains the folder and widget choices and can open the picker for you.
-2. Select the **.gemini** folder in your home folder and click **Connect**. The picker shows hidden folders. You can also press **Shift–Command–G** and enter `~/.gemini`. If there is no history yet, complete a request in Antigravity, let it save the conversation, then click **Refresh now** in AI Usage.
-3. Add **AI usage totals** to see requests, tokens, and estimated API value across the sources you connected. For Antigravity’s own seven-day totals, add a medium or larger **AI plan limits** widget, edit it, and choose **Google AI (Antigravity)**. Local widgets group the models used in Antigravity together.
-
-**Remaining quota.** In **Google setup… → Remaining quota**, sign in to the Antigravity desktop app and leave it running. If you already have an AI Usage dashboard running on this Mac, click **Connect to localhost:8796**. Otherwise the guide has a **Copy Terminal command** button. With Python 3.9 or newer, paste that command into Terminal and press Return. It downloads and verifies a pinned dashboard source archive, serves Google's quota readings only on your Mac, and exits when you press Control-C. Run the command again when you want to restart it. The first check can take a few minutes. In **AI plan limits**, choose **Google AI (Antigravity)** for the available percentages and reset times. Return to **Sources → This Mac** for your saved history.
+In **Sources → This Mac → Account limits**, click **Set up quota…** beside **Google Antigravity quota**. Sign in to the Antigravity desktop app and leave it running. If you already have an AI Usage dashboard running on this Mac, click **Connect to localhost:8796**. Otherwise, use **Copy Terminal command**. With Python 3.9 or newer, paste the command into Terminal and press Return. It downloads and verifies a pinned dashboard source archive, serves Google's quota readings only on your Mac, and exits when you press Control-C. Run the command again to restart it. The first check can take a few minutes. In **AI plan limits**, choose **Google AI (Antigravity)** for the available percentages and reset times. Return to **Sources → This Mac** for your saved history.
 
 You can also open this guide from **Sources → Dashboard → Google quota setup…**. With a [full dashboard](../README.md#install), the same dashboard can supply both history and live limits, with individual models in its **By model and effort** table.
 

@@ -71,7 +71,7 @@ struct UsageEntry: TimelineEntry {
 
     func missingLimits(for plan: Plan) -> String {
         server == SharedStore.localURL && plan.vendor == "google"
-            ? "For quota, open Google setup in AI Usage." : "No limit reading yet."
+            ? "For Google quota, open Account limits in AI Usage." : "No limit reading yet."
     }
 
     /// Where a click goes: the app, which opens the dashboard in the browser, or its settings when

@@ -9,8 +9,7 @@ struct SettingsView: View {
     @State private var address = ""
     @State private var previousCommand = ""
     @State private var statusOptions = false
-    @State private var googleGuide: GoogleSetupGuide.Topic?
-    @State private var googleAction: GoogleSetupGuide.Topic?
+    @State private var showGoogleQuota = false
     @State private var openAtLogin = LoginItem.isEnabled
     @AppStorage("showMenuBarIcon") private var showIcon = true
 
@@ -77,10 +76,11 @@ struct SettingsView: View {
         }
         .frame(width: 580, height: 600)
         .onAppear { address = SharedStore.loadConfig().server?.absoluteString ?? "" }
-        .sheet(item: $googleGuide, onDismiss: applyGoogleAction) { topic in
-            GoogleSetupGuide(topic: topic, localSource: model.source == .local) { action in
-                googleAction = action
-                googleGuide = nil
+        .sheet(isPresented: $showGoogleQuota) {
+            GoogleQuotaGuide {
+                showGoogleQuota = false
+                address = GoogleQuotaGuide.dashboardAddress
+                saveAddress()
             }
         }
     }
@@ -95,10 +95,8 @@ struct SettingsView: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
-                    if provider == .antigravity {
-                        Button("Google setup…") { googleGuide = .usage }
-                    }
                     Button(local.selected.contains(provider) ? "Choose again…" : "Connect…") { local.pick(provider) }
+                        .help("Choose the \(provider.folder) folder in your home folder.")
                         .accessibilityIdentifier("history-" + provider.rawValue)
                     if local.selected.contains(provider) {
                         Button { local.forget(provider) } label: { Image(systemName:"xmark.circle") }
@@ -107,7 +105,7 @@ struct SettingsView: View {
                 }
             }
         } header: { Text("Usage on this Mac") }
-        footer: { Text("Choose a tool’s folder to count its recorded requests and tokens. Folder access is read-only. Usage history stays on this Mac.") }
+        footer: { Text("Choose a tool’s folder in your home folder to count its saved requests and tokens. The picker shows hidden folders. Access is read-only, and history stays on this Mac.") }
 
         Section {
             HStack {
@@ -150,8 +148,18 @@ struct SettingsView: View {
                     }
                 }
             }
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Google Antigravity quota").fontWeight(.medium)
+                    Text("See the percentage left and when it resets.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Set up quota…") { showGoogleQuota = true }
+                    .accessibilityIdentifier("google-quota-setup")
+            }
         } header: { Text("Account limits") }
-        footer: { Text("Codex history can also contain a recent limit reading. For Google’s remaining quota, open Google setup above.") }
+        footer: { Text("Codex history can also contain a recent limit reading.") }
         Button("View my widgets") { model.settingsTab = "Widgets" }
     }
 
@@ -159,7 +167,7 @@ struct SettingsView: View {
         Section("Your dashboard") {
             TextField("Address", text:$address, prompt:Text("my-mac.local:8796")).onSubmit(saveAddress)
             Button("Save and read") { saveAddress() }
-            Button("Google quota setup…") { googleGuide = .quota }
+            Button("Google quota setup…") { showGoogleQuota = true }
             if let issue = model.limits?.error { Text(issue).foregroundStyle(.secondary) }
         }
         Text("Use this option if you already run an AI Usage dashboard. This Mac works independently.")
@@ -167,26 +175,13 @@ struct SettingsView: View {
     }
     private func saveAddress() { local.notice = model.setServer(address) }
 
-    private func applyGoogleAction() {
-        guard let action = googleAction else { return }
-        googleAction = nil
-        switch action {
-        case .usage:
-            if model.source == .local { local.pick(.antigravity) }
-            else { model.setSource(.local) }
-        case .quota:
-            address = GoogleSetupGuide.dashboardAddress
-            saveAddress()
-        }
-    }
-
     @ViewBuilder private var widgetPreview: some View {
         Section(model.source == .demo ? "Demo · sample data" : "Current widget readings") {
             WidgetCard(family:.systemMedium) { LimitsWidgetView(entry:model.entry(),family:.systemMedium) }
             WidgetCard(family:.systemMedium) { UsageWidgetView(entry:model.entry(),family:.systemMedium) }
         }
         Section("Add to your desktop") {
-            Text("Control-click your desktop, choose Edit Widgets, then search for AI Usage. Add AI plan limits or AI usage totals. Control-click a placed widget to choose its plan or time period.")
+            Text("Control-click the desktop, choose Edit Widgets and search for AI Usage. AI usage totals combines your connected tools. To see one plan’s seven-day totals, add a medium or larger AI plan limits widget, Control-click it and choose the plan.")
         }
     }
 }
