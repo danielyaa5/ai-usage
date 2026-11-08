@@ -9,7 +9,6 @@ struct SettingsView: View {
     @State private var address = ""
     @State private var previousCommand = ""
     @State private var statusOptions = false
-    @State private var showGoogleQuota = false
     @State private var openAtLogin = LoginItem.isEnabled
     @AppStorage("showMenuBarIcon") private var showIcon = true
 
@@ -76,13 +75,6 @@ struct SettingsView: View {
         }
         .frame(width: 580, height: 600)
         .onAppear { address = SharedStore.loadConfig().server?.absoluteString ?? "" }
-        .sheet(isPresented: $showGoogleQuota) {
-            GoogleQuotaGuide {
-                showGoogleQuota = false
-                address = GoogleQuotaGuide.dashboardAddress
-                saveAddress()
-            }
-        }
     }
 
     @ViewBuilder private var localSetup: some View {
@@ -151,11 +143,14 @@ struct SettingsView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Google Antigravity quota").fontWeight(.medium)
-                    Text("See the percentage left and when it resets.")
+                    Text(local.googleQuotaStatus)
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("Set up quota…") { showGoogleQuota = true }
+                Button(local.googleQuotaConnected ? "Disconnect" : "Connect Google quota") {
+                    if local.googleQuotaConnected { local.disconnectGoogleQuota() }
+                    else { local.connectGoogleQuota() }
+                }
                     .accessibilityIdentifier("google-quota-setup")
             }
         } header: { Text("Account limits") }
@@ -167,7 +162,10 @@ struct SettingsView: View {
         Section("Your dashboard") {
             TextField("Address", text:$address, prompt:Text("my-mac.local:8796")).onSubmit(saveAddress)
             Button("Save and read") { saveAddress() }
-            Button("Google quota setup…") { showGoogleQuota = true }
+            Button("Use Google quota on this Mac") {
+                if !local.googleQuotaConnected { local.notice = local.connectGoogleQuota() }
+                if local.googleQuotaConnected { model.setSource(.local) }
+            }
             if let issue = model.limits?.error { Text(issue).foregroundStyle(.secondary) }
         }
         Text("Use this option if you already run an AI Usage dashboard. This Mac works independently.")

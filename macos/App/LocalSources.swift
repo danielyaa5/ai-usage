@@ -7,6 +7,7 @@ final class LocalSources: ObservableObject {
     private let history = HistoryReader()
     private let account = ChatGPTAccount()
     private var listener: LoopbackServer?
+    private var googleQuotaCheck: Task<[LimitWindow], Error>?
     private var listenerGeneration = 0
     private let prices: LocalPrices? = Bundle.main.url(forResource: "pricing", withExtension: "json")
         .flatMap { try? Data(contentsOf: $0) }.flatMap { try? JSONDecoder().decode(LocalPrices.self, from: $0) }
@@ -15,6 +16,9 @@ final class LocalSources: ObservableObject {
     @Published private(set) var accountBusy = false
     @Published private(set) var statusLineEnabled = false
     @Published private(set) var statusLineReady = false
+    @Published private(set) var googleQuotaConnected = false
+    private static let googleQuotaHelp = "Read remaining percentages and reset times. Connect opens Antigravity if needed."
+    @Published private(set) var googleQuotaStatus = LocalSources.googleQuotaHelp
     @Published private(set) var messages: [HistoryProvider: String] = [:]
     @Published var notice: String?
     var changed: (() -> Void)?
@@ -27,6 +31,8 @@ final class LocalSources: ObservableObject {
         selected = Set(HistoryProvider.allCases.filter { defaults.data(forKey: bookmarkKey($0)) != nil })
         chatConnected = defaults.bool(forKey: "chatConnected")
         statusLineEnabled = defaults.bool(forKey: "claudeStatusLine")
+        googleQuotaConnected = defaults.data(forKey: "googleQuotaFolder") != nil
+        if googleQuotaConnected { googleQuotaStatus = "Waiting for the next quota check…" }
         for provider in [HistoryProvider.claude, .codex] {
             if let data = defaults.data(forKey: windowKey(provider)),
                let saved = try? JSONDecoder().decode([LimitWindow].self, from: data) { windows[provider] = saved }
@@ -44,7 +50,7 @@ final class LocalSources: ObservableObject {
         active = enabled
         revision += 1
         if enabled && receiveStatusLine && statusLineEnabled { startListener() }
-        if !enabled { stopListener(); account.cancel() }
+        if !enabled { stopListener(); account.cancel(); cancelGoogleQuotaCheck() }
     }
 
     func pick(_ provider: HistoryProvider) {
@@ -77,6 +83,96 @@ final class LocalSources: ObservableObject {
         selected.remove(provider)
         messages[provider] = nil
         invalidateHistory()
+    }
+
+    @discardableResult
+    func connectGoogleQuota() -> String? {
+        guard !googleQuotaConnected else { return nil }
+        let appID = "com.google.antigravity"
+        guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: appID) else {
+            googleQuotaStatus = "Install and open the Antigravity desktop app, sign in, then connect quota."
+            return googleQuotaStatus
+        }
+        if NSRunningApplication.runningApplications(withBundleIdentifier: appID).isEmpty {
+            let options = NSWorkspace.OpenConfiguration()
+            options.activates = false
+            NSWorkspace.shared.openApplication(at: app, configuration: options) { [weak self] _, error in
+                Task { @MainActor in
+                    guard error == nil else { return }
+                    try? await Task.sleep(for: .seconds(4))
+                    if let self, self.active && self.googleQuotaConnected { self.changed?() }
+                }
+            }
+        }
+        var bookmark = antigravityHistoryGrant()
+        if bookmark == nil {
+            let panel = NSOpenPanel()
+            panel.prompt = "Allow"
+            panel.message = "Allow read-only access to Antigravity’s daemon folder so AI Usage can connect to its quota service on this Mac."
+            panel.canChooseFiles = false
+            panel.canChooseDirectories = true
+            panel.canCreateDirectories = false
+            panel.showsHiddenFiles = true
+            panel.directoryURL = AntigravityQuotaReader.registrationDirectory
+            guard panel.runModal() == .OK, let url = panel.url else { return nil }
+            guard let daemon = AntigravityQuotaReader.directory(in: url) else {
+                googleQuotaStatus = "Choose the daemon folder in ~/.gemini/antigravity. Open Antigravity once if it’s missing."
+                return googleQuotaStatus
+            }
+            bookmark = (try? daemon.bookmarkData(options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess],
+                                                 includingResourceValuesForKeys: nil, relativeTo: nil))
+                ?? (try? url.bookmarkData(options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess],
+                                          includingResourceValuesForKeys: nil, relativeTo: nil))
+        }
+        guard let bookmark else { googleQuotaStatus = AntigravityQuotaError.permission.rawValue; return googleQuotaStatus }
+        defaults.set(bookmark, forKey: "googleQuotaFolder")
+        googleQuotaConnected = true
+        googleQuotaStatus = "Checking Antigravity on this Mac…"
+        revision += 1
+        changed?()
+        return nil
+    }
+
+    private func antigravityHistoryGrant() -> Data? {
+        guard let data = defaults.data(forKey: bookmarkKey(.antigravity)) else { return nil }
+        var stale = false
+        guard let url = try? URL(resolvingBookmarkData: data, options: [.withSecurityScope, .withoutUI],
+                                 relativeTo: nil, bookmarkDataIsStale: &stale),
+              url.startAccessingSecurityScopedResource() else { return nil }
+        defer { url.stopAccessingSecurityScopedResource() }
+        guard let daemon = AntigravityQuotaReader.directory(in: url) else { return nil }
+        return (try? daemon.bookmarkData(options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess],
+                                         includingResourceValuesForKeys: nil, relativeTo: nil)) ?? data
+    }
+
+    func disconnectGoogleQuota() {
+        cancelGoogleQuotaCheck()
+        defaults.removeObject(forKey: "googleQuotaFolder")
+        googleQuotaConnected = false
+        googleQuotaStatus = Self.googleQuotaHelp
+        invalidateHistory()
+    }
+
+    private func cancelGoogleQuotaCheck() {
+        googleQuotaCheck?.cancel()
+        googleQuotaCheck = nil
+    }
+
+    private func readGoogleQuota() async throws -> [LimitWindow] {
+        try Task.checkCancellation()
+        guard let data = defaults.data(forKey: "googleQuotaFolder") else { throw AntigravityQuotaError.permission }
+        var stale = false
+        let url = try URL(resolvingBookmarkData: data, options: [.withSecurityScope, .withoutUI],
+                          relativeTo: nil, bookmarkDataIsStale: &stale)
+        guard url.startAccessingSecurityScopedResource() else { throw AntigravityQuotaError.permission }
+        defer { url.stopAccessingSecurityScopedResource() }
+        if stale {
+            let updated = try url.bookmarkData(options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess],
+                                               includingResourceValuesForKeys: nil, relativeTo: nil)
+            defaults.set(updated, forKey: "googleQuotaFolder")
+        }
+        guard let directory = AntigravityQuotaReader.directory(in: url) else { throw AntigravityQuotaError.permission }
+        return try await AntigravityQuotaReader.read(directory: directory)
     }
     private func invalidateHistory() {
         revision += 1
@@ -190,6 +286,24 @@ final class LocalSources: ObservableObject {
         if statusLineEnabled { connectedLimits[.claude] = windows[.claude] ?? [] }
         if messages != status.merging(issues, uniquingKeysWith: { _, warning in warning }) {
             messages = status.merging(issues, uniquingKeysWith: { _, warning in warning })
+        }
+        if googleQuotaConnected {
+            cancelGoogleQuotaCheck()
+            let check = Task { try await readGoogleQuota() }
+            googleQuotaCheck = check
+            do {
+                let windows = try await check.value
+                guard active && run == revision else { return nil }
+                connectedLimits[.antigravity] = windows
+                googleQuotaStatus = "Connected · \(windows.count) quota windows"
+            } catch {
+                guard active && run == revision else { return nil }
+                let reason = (error as? AntigravityQuotaError)?.rawValue ?? AntigravityQuotaError.permission.rawValue
+                connectedLimits[.antigravity] = []
+                googleQuotaStatus = reason
+                issues[.antigravity] = reason
+            }
+            googleQuotaCheck = nil
         }
         let prices = self.prices
         let summaries = await Task.detached(priority: .utility) {

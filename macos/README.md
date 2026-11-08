@@ -20,9 +20,11 @@ History covers activity recorded on this Mac. If there are no requests yet, comp
 
 ## Google Antigravity quota
 
-In **Sources → This Mac → Account limits**, click **Set up quota…** beside **Google Antigravity quota**. Sign in to the Antigravity desktop app and leave it running. If you already have an AI Usage dashboard running on this Mac, click **Connect to localhost:8796**. Otherwise, use **Copy Terminal command**. With Python 3.9 or newer, paste the command into Terminal and press Return. It downloads and verifies a pinned dashboard source archive, serves Google's quota readings only on your Mac, and exits when you press Control-C. Run the command again to restart it. The first check can take a few minutes. In **AI plan limits**, choose **Google AI (Antigravity)** for the available percentages and reset times. Return to **Sources → This Mac** for your saved history.
+In **Sources → This Mac → Account limits**, click **Connect Google quota**. AI Usage reuses permission for Antigravity’s history folder if you have already connected it. Otherwise, macOS opens its folder picker at Antigravity’s **daemon** folder. Click **Allow** to grant read-only access. Connect opens the installed Antigravity desktop app if needed. Sign in to Antigravity and keep it running.
 
-You can also open this guide from **Sources → Dashboard → Google quota setup…**. With a [full dashboard](../README.md#install), the same dashboard can supply both history and live limits, with individual models in its **By model and effort** table.
+Add **AI plan limits** to your desktop and choose **Google AI (Antigravity)** to see the remaining percentages and reset times. The menu bar app checks about every five minutes, including with its settings window closed. If quota is unavailable, check that Antigravity is up to date and signed in, then click **Refresh now**. The same **This Mac** source can show Google quota alongside the history and other accounts you have connected. **Disconnect** turns off the quota reading independently of usage history.
+
+If you previously used **Dashboard** for Google quota, **Use Google quota on this Mac** switches to the local reader after it connects. Your saved dashboard address is retained for future use. An optional [full dashboard](../README.md#install) also offers a per-model usage table.
 
 ## Other sources
 

@@ -31,7 +31,7 @@ public extension UsageSummary {
 }
 
 public extension UsageSummary {
-    /// The user-visible demo models a standalone Mac. Antigravity contributes history only.
+    /// Fictional history and account limits from all three sources available on a standalone Mac.
     static func localSample(range: String, now: Date) -> UsageSummary {
         var sample = UsageSummary.sample(now: now)
         sample.host = "Demo"
@@ -46,7 +46,6 @@ public extension UsageSummary {
             sample.plans[i].requests = Int(Double(sample.plans[i].requests) * factor)
             sample.plans[i].tokens = Int(Double(sample.plans[i].tokens) * factor)
             sample.plans[i].cost *= factor
-            if sample.plans[i].vendor == "google" { sample.plans[i].windows = [] }
         }
         sample.totals.requests = sample.plans.reduce(0) { $0 + $1.requests }
         sample.totals.tokens = sample.plans.reduce(0) { $0 + $1.tokens }

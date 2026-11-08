@@ -21,6 +21,7 @@ final class LocalUsageTests: XCTestCase {
         let demo = await Reading.load(range:"30d")
         XCTAssertEqual(demo.summary?.host,"Demo")
         XCTAssertEqual(demo.summary?.range,"30d")
+        XCTAssertEqual(demo.summary?.plan(vendor: "google")?.windows.count, 4)
         try SharedStore.save(.init(source:.local))
         let empty = await Reading.load(range:"today")
         XCTAssertNil(empty.summary, "Fictional readings must never become a user's history")

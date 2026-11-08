@@ -4,7 +4,7 @@ A local dashboard for the Claude Code, Codex (ChatGPT) and Antigravity (Gemini) 
 the plan limits that matter on flat-rate subscriptions, what the same requests would cost on API
 keys, and which jobs, apps, models and effort levels used them.
 
-The [standalone Mac app](macos/README.md) can read local tool history and show it in desktop widgets without installing this dashboard. The Python dashboard is also available for a more detailed breakdown or for sharing readings across your own Macs.
+The [standalone Mac app](macos/README.md) reads local tool history and can connect directly to Antigravity for live Google quota. Its desktop widgets work independently of this dashboard. The Python dashboard is also available for a more detailed breakdown or for sharing readings across your own Macs.
 
 ![The dashboard with fictional data: plan limits for Claude, ChatGPT and Antigravity, totals for the last 7 days and a cost chart](docs/dashboard.png)
 
