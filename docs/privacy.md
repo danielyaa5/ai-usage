@@ -17,4 +17,4 @@ Choose **Disconnect history** in the tool’s connection to revoke the app’s s
 - **Dashboard.** Choosing Dashboard sends summary requests to the address you enter. The administrator of that dashboard controls its data and logs. No dashboard is needed for This Mac.
 - **Demo.** Demo uses fictional data. It does not require an account or a network connection.
 
-For privacy and support questions, visit the [AI Usage support page](https://github.com/danielyaa5/ai-usage/issues).
+For privacy and support questions, visit the [AI Usage support page](https://danielyakobian.com/ai-usage/).

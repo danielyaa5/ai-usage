@@ -1,9 +1,9 @@
 # Mac App Store release files
 
 - [Listing and review notes](listing.json)
-- [Store screenshots](screenshots/01-desktop-usage.png), [local setup](screenshots/02-connect-history.png), and [plan limits](screenshots/03-plan-limits.png). All three PNGs are 1440 × 900 and contain fictional data.
-- [Privacy policy](../../docs/privacy.md). Its listing URL becomes usable once the policy is published to the public repository’s default branch.
-- [Support](https://github.com/danielyaa5/ai-usage/issues)
+- Upload [plan limits](screenshots/03-plan-limits.png), [usage totals](screenshots/01-desktop-usage.png), then [local setup](screenshots/02-connect-history.png). All three are opaque 1440 × 900 PNGs with fictional data.
+- The [privacy policy](../../docs/privacy.md) is bundled in the app. Publish the [support page](https://danielyakobian.com/ai-usage/) and [online policy](https://danielyakobian.com/ai-usage/privacy/) before submitting.
+- Run `python3 macos/release/preview.py /path/to/listing.html` from the repository root to build a portable listing preview. Pass `--site-preview /path/to/staged/ai-usage` to include the support and privacy pages for offline review. The U.S. price and screenshot order come from the listing file.
 
 ## Local archive and export
 

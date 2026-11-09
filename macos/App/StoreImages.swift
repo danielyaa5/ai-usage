@@ -1,6 +1,8 @@
 import AppKit
 import AIUsageKit
+import ImageIO
 import SwiftUI
+import UniformTypeIdentifiers
 import WidgetKit
 
 /// Reproducible App Store artwork. Render only the real setup view and fictional widget readings.
@@ -26,13 +28,25 @@ enum StoreImages {
             let view = StoreScene(page:page, setup:setupImage, entry:entry)
             let renderer = ImageRenderer(content:view.frame(width:960,height:600).environment(\.colorScheme,page == 3 ? .dark : .light))
             renderer.scale = 1.5
-            guard let image = renderer.cgImage,
-                  let data = NSBitmapImageRep(cgImage:image).representation(using:.png,properties:[:]) else {
-                throw CocoaError(.fileWriteUnknown)
-            }
+            guard let image = renderer.cgImage else { throw CocoaError(.fileWriteUnknown) }
             let names = ["01-desktop-usage","02-connect-history","03-plan-limits"]
-            try data.write(to:folder.appendingPathComponent(names[page-1]+".png"),options:.atomic)
+            try writeStorePNG(image, to: folder.appendingPathComponent(names[page-1] + ".png"))
         }
+    }
+
+    private static func writeStorePNG(_ image: CGImage, to url: URL) throws {
+        guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(data: nil, width: image.width, height: image.height,
+                                      bitsPerComponent: 8, bytesPerRow: 0, space: colorSpace,
+                                      bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        guard let opaque = context.makeImage(),
+              let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil)
+        else { throw CocoaError(.fileWriteUnknown) }
+        CGImageDestinationAddImage(destination, opaque, nil)
+        guard CGImageDestinationFinalize(destination) else { throw CocoaError(.fileWriteUnknown) }
     }
 
     private static func capture(_ model: AppModel, file: String, in folder: URL) throws -> NSImage {
@@ -72,7 +86,13 @@ private struct StoreScene: View {
             background
             HStack(spacing:22) {
                 VStack(alignment:.leading,spacing:18) {
-                    Label("AI Usage",systemImage:"chart.bar.fill").font(.system(size:16,weight:.semibold))
+                    HStack(spacing: 8) {
+                        if let url = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+                           let icon = NSImage(contentsOf: url) {
+                            Image(nsImage: icon).resizable().frame(width: 30, height: 30)
+                        }
+                        Text("AI Usage").font(.system(size: 16, weight: .semibold))
+                    }
                     Spacer()
                     Text(["Your AI usage, on this Mac.","Choose the tools you use.","See what’s left."][page-1])
                         .font(.system(size:52,weight:.bold)).tracking(-2).fixedSize(horizontal:false,vertical:true)

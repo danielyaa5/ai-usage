@@ -6,6 +6,7 @@ struct SettingsView: View {
     static let initialSize = NSSize(width: 780, height: 548)
     @ObservedObject var model: AppModel
     @ObservedObject private var local: LocalSources
+    @State private var showsPrivacy = false
 
     init(model: AppModel) {
         self.model = model
@@ -15,8 +16,11 @@ struct SettingsView: View {
     var body: some View {
         let journey = model.showsSetup ? model.setup : nil
         HStack(spacing: 0) {
-            Group {
+            VStack(alignment: .leading, spacing: 0) {
                 if let journey { SetupRail(step: journey.step) } else { connectionsRail }
+                Button("Privacy policy") { showsPrivacy = true }
+                    .buttonStyle(.link).font(.callout)
+                    .padding(.horizontal, 19).padding(.bottom, 14)
             }
             .frame(width: 192).frame(maxHeight: .infinity, alignment: .top)
             .background(Color(nsColor: .underPageBackgroundColor))
@@ -52,6 +56,7 @@ struct SettingsView: View {
         }
         .frame(minWidth: 690, idealWidth: Self.initialSize.width, maxWidth: .infinity,
                minHeight: 470, idealHeight: Self.initialSize.height, maxHeight: .infinity)
+        .sheet(isPresented: $showsPrivacy) { PrivacyPolicyView() }
     }
 
     private var connectionsRail: some View {

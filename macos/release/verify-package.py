@@ -44,7 +44,9 @@ with tempfile.TemporaryDirectory(prefix="aiusage-package-") as tmp:
         ats = info["NSAppTransportSecurity"]
         assert ats.get("NSAllowsLocalNetworking") and not ats.get("NSAllowsArbitraryLoads")
     files = {p.name for p in (app / "Contents/Resources").rglob("*")}
-    assert {"PrivacyInfo.xcprivacy", "Codex-LICENSE.txt", "Codex-NOTICE.txt", "Ratatui-LICENSE.txt", "codex-models.json", "pricing.json"} <= files
+    assert {"PrivacyInfo.xcprivacy", "privacy.md", "AppIcon.icns", "Assets.car", "Codex-LICENSE.txt", "Codex-NOTICE.txt", "Ratatui-LICENSE.txt", "codex-models.json", "pricing.json"} <= files
+    policy = Path(__file__).resolve().parents[2] / "docs" / "privacy.md"
+    assert (app / "Contents/Resources/privacy.md").read_bytes() == policy.read_bytes()
     assert "GoogleQuotaSetup.txt" not in files
     assert not any("StoreTest" in p.name for p in app.rglob("*"))
     print("Verified the signed package, app, widget, sandboxed helper, local networking, shared group and resources.")

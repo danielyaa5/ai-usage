@@ -14,7 +14,7 @@ settings:
   base:
     SWIFT_VERSION: "5.0"
     MARKETING_VERSION: "1.0"
-    CURRENT_PROJECT_VERSION: "8"
+    CURRENT_PROJECT_VERSION: "9"
     ARCHS: arm64
     CODE_SIGN_STYLE: Automatic
     ENABLE_HARDENED_RUNTIME: YES
@@ -36,6 +36,8 @@ targets:
       - path: Notices
         buildPhase: resources
       - path: PrivacyInfo.xcprivacy
+        buildPhase: resources
+      - path: ../docs/privacy.md
         buildPhase: resources
       - path: ../ai_usage/pricing.json
         buildPhase: resources
