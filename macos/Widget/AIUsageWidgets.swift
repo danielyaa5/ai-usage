@@ -108,6 +108,9 @@ enum Timelines {
         let now = Date()
         let reading = await Reading.load(range: range, reuse: reuse, tolerate: tolerate, timeout: 10, now: now)
         let first = UsageEntry(date: now, reading: reading, vendor: vendor)
+        if reading.localState == .readingSources {
+            return Timeline(entries: [first], policy: .after(now.addingTimeInterval(60)))
+        }
         let entries = (0...24).map { step -> UsageEntry in
             var entry = first
             entry.date = now.addingTimeInterval(Double(step) * 5 * 60)

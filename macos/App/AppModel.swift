@@ -55,6 +55,10 @@ final class AppModel: ObservableObject {
         showsSetup = false
         saveSetup(nil)
         settingsPage = page
+        if source == .local, local.hasSources {
+            reloadAfterSetup = true
+            refresh()
+        }
     }
 
     private func saveSetup(_ progress: SetupJourney?) {
@@ -64,6 +68,7 @@ final class AppModel: ObservableObject {
         setup = progress
     }
     private var refreshAgain = false
+    private var reloadAfterSetup = false
 
     /// How often the dashboard is read while it answers. Failures back off to 30 minutes.
     static let interval: TimeInterval = 5 * 60
@@ -86,6 +91,12 @@ final class AppModel: ObservableObject {
     func start() {
         local.changed = { [weak self] in self?.refresh() }
         local.activate(source == .local)
+        local.connectionStateChanged = { [weak self] in
+            guard let self, self.source == .local else { return }
+            for range in UsageRanges.all { self.readings[range] = SharedStore.localReading(range: range) }
+            self.shown = Self.signature(self.readings)
+            self.reloadWidgets()
+        }
         // A dashboard reading is never shown in local or demonstration mode.
         for range in UsageRanges.all {
             if source == .local { readings[range] = SharedStore.localReading(range: range) }
@@ -108,14 +119,17 @@ final class AppModel: ObservableObject {
 
     private func readAll(run: Int) async {
         let now = Date()
+        let revision = local.revision
         var results: [String: Reading] = [:]
         if source == .local {
-            if let snapshot = await local.collect(now: now), run == generation {
-                do { try SharedStore.publishLocal(snapshot) }
-                catch { local.notice = "Could not share the reading with the widget. Reopen AI Usage and try again." }
-            }
+            let snapshot = await local.collect(now: now)
+            guard run == generation else { return }
+            guard let snapshot, revision == local.revision else { restartLocalRead(); return }
+            do { try SharedStore.publishLocal(snapshot) }
+            catch { local.notice = "Could not share the reading with the widget. Reopen AI Usage and try again." }
         }
         guard run == generation else { return }
+        if source == .local && revision != local.revision { restartLocalRead(); return }
         await withTaskGroup(of: (String, Reading).self) { group in
             for range in UsageRanges.all {
                 group.addTask { (range, await Reading.load(range: range, record: true, now: now)) }
@@ -133,11 +147,20 @@ final class AppModel: ObservableObject {
         // Redraw when something the widgets show changed, and at least every half hour so their
         // "as of" times stay true even when macOS defers their own reloads.
         let signature = Self.signature(results)
-        if signature != shown || lastReload.map({ now.timeIntervalSince($0) > 30 * 60 }) ?? true {
+        if reloadAfterSetup || signature != shown || lastReload.map({ now.timeIntervalSince($0) > 30 * 60 }) ?? true {
+            reloadAfterSetup = false
             shown = signature
             reloadWidgets(at: now)
         }
         if refreshAgain { refreshAgain = false; refresh() } else { schedule() }
+    }
+
+    /// The connected sources changed while their reading was in flight. Read the new set without
+    /// publishing the interrupted result or replacing the app's preview with an empty entry.
+    private func restartLocalRead() {
+        refreshing = false
+        refreshAgain = false
+        refresh()
     }
 
     private func schedule() {
@@ -160,7 +183,7 @@ final class AppModel: ObservableObject {
     static func signature(_ readings: [String: Reading]) -> String {
         readings.keys.sorted().map { range -> String in
             guard let reading = readings[range] else { return range }
-            guard let summary = reading.summary else { return "\(range):none:\(reading.error != nil)" }
+            guard let summary = reading.summary else { return "\(range):\(reading.localState?.rawValue ?? "none"):\(reading.error != nil)" }
             let plans = summary.plans.map { plan in
                 plan.vendor + ":" + plan.windows.map { window in
                     "\(window.id)=\(Int(window.leftPct.rounded()))@\(Int((window.resetsAt ?? window.observedAt)?.timeIntervalSince1970 ?? 0))"
@@ -197,6 +220,7 @@ final class AppModel: ObservableObject {
     }
 
     private func change(to value: SharedStore.Source, server url: URL) {
+        reloadAfterSetup = false
         source = value
         server = url
         local.activate(value == .local)

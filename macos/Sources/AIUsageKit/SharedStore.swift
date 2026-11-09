@@ -96,9 +96,12 @@ public enum SharedStore {
     public struct LocalSnapshot: Codable, Sendable {
         public var summaries: [String: UsageSummary]
         public var issue: String?
-        public init(summaries: [String: UsageSummary], issue: String? = nil) {
+        /// Older snapshots did not record whether a source had already been selected.
+        public var hasSources: Bool?
+        public init(summaries: [String: UsageSummary], issue: String? = nil, hasSources: Bool? = nil) {
             self.summaries = summaries
             self.issue = issue
+            self.hasSources = hasSources
         }
     }
 
@@ -108,10 +111,29 @@ public enum SharedStore {
         try cacheEncoder.encode(snapshot).write(to: folder.appendingPathComponent("this-mac.json"), options: .atomic)
     }
 
+    /// Keep an existing authorized reading while adding a source. On disconnect or replacement,
+    /// remove the old data immediately and tell the widget whether another reading is on its way.
+    @discardableResult
+    public static func prepareLocal(hasSources: Bool, discardReadings: Bool = false) throws -> Bool {
+        let previous = read(LocalSnapshot.self, "this-mac.json")
+        if hasSources, !discardReadings, let previous, !previous.summaries.isEmpty { return false }
+        if let previous, previous.summaries.isEmpty, previous.hasSources == hasSources { return false }
+        try publishLocal(.init(summaries: [:], hasSources: hasSources))
+        return true
+    }
+
     public static func localReading(range: String) -> Reading {
         let snapshot = read(LocalSnapshot.self, "this-mac.json")
         let summary = snapshot?.summaries[range]
-        return Reading(summary: summary, fetchedAt: summary?.generatedAt, error: snapshot?.issue, server: localURL)
+        var reading = Reading(summary: summary, fetchedAt: summary?.generatedAt, error: snapshot?.issue, server: localURL)
+        if summary == nil {
+            switch snapshot?.hasSources {
+            case true: reading.localState = .readingSources
+            case false: reading.localState = .needsSetup
+            default: reading.localState = .openApp
+            }
+        }
+        return reading
     }
 
     public static func clearCache() {
@@ -184,6 +206,8 @@ public enum SharedStore {
 
 /// One fetch with the cache as fallback: what the widgets and the app show.
 public struct Reading: Sendable {
+    public enum LocalState: String, Sendable { case openApp, readingSources, needsSetup }
+    public var localState: LocalState?
     public var summary: UsageSummary?
     /// When `summary` was fetched; older than now when it came from the cache.
     public var fetchedAt: Date?

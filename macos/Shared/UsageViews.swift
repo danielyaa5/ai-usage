@@ -439,13 +439,22 @@ struct UnavailableView: View {
     var entry: UsageEntry
     @Environment(\.colorScheme) private var scheme
 
+    private var localCopy: (title: String, detail: String, action: String, link: AppLink) {
+        let app = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "AI Usage"
+        switch entry.localState {
+        case .needsSetup: return ("Connect a source", "Connect an account or usage history in \(app).", "Open setup", .settings)
+        case .readingSources: return ("Reading your sources", "Your readings will appear here when they’re ready.", "Check now", .refresh)
+        default: return ("Waiting for \(app)", "Open the app to check for a reading.", "Open app", .settings)
+        }
+    }
+
     var body: some View {
         let palette = Palette(scheme: scheme)
         VStack(alignment: .leading, spacing: 5) {
             Image(systemName: "gauge.with.dots.needle.33percent")
                 .font(.system(size: 20))
                 .foregroundStyle(palette.muted)
-            Text(entry.server == SharedStore.localURL ? "Connect a source" : "Can't reach AI Usage")
+            Text(entry.server == SharedStore.localURL ? localCopy.title : "Can't reach AI Usage")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(palette.primary)
                 .lineLimit(1)
@@ -455,12 +464,16 @@ struct UnavailableView: View {
                 .foregroundStyle(palette.secondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
-            Text(entry.server == SharedStore.localURL ? "Open AI Usage to connect your account or usage history." : "Click to check the dashboard address in AI Usage.")
+            Text(entry.server == SharedStore.localURL ? localCopy.detail : "Click to check the dashboard address in AI Usage.")
                 .font(.system(size: 10))
                 .foregroundStyle(palette.muted)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
-            if entry.server != SharedStore.localURL { Button(intent: RefreshUsageIntent()) {
+            if entry.server == SharedStore.localURL {
+                Link(destination: localCopy.link.url) {
+                    Label(localCopy.action, systemImage: "arrow.up.forward").font(.system(size: 10, weight: .medium))
+                }
+            } else { Button(intent: RefreshUsageIntent()) {
                 Label("Try again", systemImage: "arrow.clockwise")
                     .font(.system(size: 10, weight: .medium))
             }

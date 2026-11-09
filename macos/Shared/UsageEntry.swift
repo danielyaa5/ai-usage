@@ -17,6 +17,7 @@ struct UsageEntry: TimelineEntry {
     var fetchedAt: Date?
     var error: String?
     var server: URL
+    var localState: Reading.LocalState?
     var vendor: String?
     var isSample = false
 
@@ -26,6 +27,7 @@ struct UsageEntry: TimelineEntry {
         fetchedAt = reading.fetchedAt
         error = reading.error
         server = reading.server
+        localState = reading.localState
         self.vendor = vendor
     }
 
@@ -77,7 +79,8 @@ struct UsageEntry: TimelineEntry {
     /// Where a click goes: the app, which opens the dashboard in the browser, or its settings when
     /// there's nothing to show.
     var tapURL: URL {
-        summary == nil || server == SharedStore.localURL || server == SharedStore.demoURL
+        if localState == .readingSources { return AppLink.refresh.url }
+        return summary == nil || server == SharedStore.localURL || server == SharedStore.demoURL
             ? AppLink.settings.url : AppLink.dashboard.url
     }
 }

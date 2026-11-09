@@ -10,6 +10,33 @@ final class LocalUsageTests: XCTestCase {
     }
     override func tearDownWithError() throws { SharedStore.folderOverride = nil; try FileManager.default.removeItem(at: root) }
 
+    func testWidgetDistinguishesUnknownSetupFromSourcesBeingRead() throws {
+        SharedStore.folderOverride = root
+        XCTAssertEqual(SharedStore.localReading(range: "7d").localState, .openApp)
+        try Data(#"{"summaries":{}}"#.utf8).write(to: root.appendingPathComponent("this-mac.json"))
+        XCTAssertEqual(SharedStore.localReading(range: "7d").localState, .openApp)
+        XCTAssertTrue(try SharedStore.prepareLocal(hasSources: false))
+        XCTAssertEqual(SharedStore.localReading(range: "7d").localState, .needsSetup)
+        XCTAssertTrue(try SharedStore.prepareLocal(hasSources: true))
+        XCTAssertFalse(try SharedStore.prepareLocal(hasSources: true))
+        XCTAssertEqual(SharedStore.localReading(range: "7d").localState, .readingSources)
+    }
+
+    func testAddingPreservesReadingsAndRevokingDropsOldData() throws {
+        SharedStore.folderOverride = root
+        let summary = UsageSummary.localSample(range: "7d", now: Date())
+        // This is also the format written by a previous version of the app.
+        try SharedStore.publishLocal(.init(summaries: ["7d": summary]))
+        try SharedStore.prepareLocal(hasSources: true)
+        XCTAssertEqual(SharedStore.localReading(range: "7d").summary?.plans.map(\.vendor), summary.plans.map(\.vendor))
+        XCTAssertNil(SharedStore.localReading(range: "7d").localState)
+        try SharedStore.prepareLocal(hasSources: true, discardReadings: true)
+        XCTAssertNil(SharedStore.localReading(range: "7d").summary)
+        XCTAssertEqual(SharedStore.localReading(range: "7d").localState, .readingSources)
+        try SharedStore.prepareLocal(hasSources: false)
+        XCTAssertEqual(SharedStore.localReading(range: "7d").localState, .needsSetup)
+    }
+
     func testFreshInstallDemoAndOldDashboard() async throws {
         SharedStore.folderOverride = root
         XCTAssertEqual(SharedStore.loadConfig().source,.local)

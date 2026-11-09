@@ -38,9 +38,14 @@ final class LocalSources: ObservableObject {
     @Published private(set) var messages: [HistoryProvider: String] = [:]
     @Published var notice: String?
     var changed: (() -> Void)?
+    var connectionStateChanged: (() -> Void)?
     private var active = false
-    private var revision = 0
+    private(set) var revision = 0
     @Published private var windows: [HistoryProvider: [LimitWindow]] = [:]
+
+    var hasSources: Bool {
+        !selected.isEmpty || chatConnected || claudeDesktop != nil || statusLineEnabled || googleQuotaConnected
+    }
 
     func lastQuotaReading(_ provider: HistoryProvider) -> Date? {
         if provider == .claude, claudeDesktop != nil { return desktopWindows.first?.observedAt }
@@ -78,6 +83,7 @@ final class LocalSources: ObservableObject {
     func activate(_ enabled: Bool, receiveStatusLine: Bool = true) {
         active = enabled
         revision += 1
+        if enabled { publishConnectionState() }
         if enabled && receiveStatusLine && statusLineEnabled { startListener() }
         if !enabled { stopListener(); account.cancel(); cancelGoogleQuotaCheck() }
     }
@@ -103,10 +109,10 @@ final class LocalSources: ObservableObject {
             }
             let bookmark = try url.bookmarkData(options:[.withSecurityScope,.securityScopeAllowOnlyReadAccess], includingResourceValuesForKeys:nil, relativeTo:nil)
             defaults.set(bookmark, forKey:bookmarkKey(provider))
-            selected.insert(provider)
+            let replacing = !selected.insert(provider).inserted
             if provider == .codex { codexHistoryObservedAt = nil }
             messages[provider] = "Reading history…"
-            invalidateHistory()
+            sourcesChanged(discardReadings: replacing, forgetHistory: replacing)
         } catch { notice = "Could not save read-only access. Choose the folder again." }
     }
     func forget(_ provider: HistoryProvider) {
@@ -114,7 +120,7 @@ final class LocalSources: ObservableObject {
         selected.remove(provider)
         if provider == .codex { codexHistoryObservedAt = nil }
         messages[provider] = nil
-        invalidateHistory()
+        sourcesChanged(discardReadings: true, forgetHistory: true)
     }
 
     private static var claudeDesktopDirectory: URL? {
@@ -144,12 +150,12 @@ final class LocalSources: ObservableObject {
         do {
             let grant = try selected.bookmarkData(options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess],
                                                   includingResourceValuesForKeys: nil, relativeTo: nil)
+            let replacing = claudeDesktop != nil || (statusLineEnabled && lastQuotaReading(.claude) != nil)
             defaults.set(grant, forKey: "claudeDesktopFolder")
             // Keep an already configured terminal connection intact for a future switch back.
             stopListener()
             claudeDesktop = .checking
-            revision += 1
-            changed?()
+            sourcesChanged(discardReadings: replacing)
         } catch { notice = "Couldn’t save read-only access to the Claude folder. Try again." }
     }
 
@@ -159,7 +165,7 @@ final class LocalSources: ObservableObject {
         enteredDesktopUsage = nil
         claudeDesktop = nil
         if statusLineEnabled { startListener() }
-        invalidateHistory()
+        sourcesChanged(discardReadings: true)
     }
 
     var desktopWindows: [LimitWindow] {
@@ -238,8 +244,7 @@ final class LocalSources: ObservableObject {
         defaults.set(bookmark, forKey: "googleQuotaFolder")
         googleQuotaConnected = true
         googleQuotaStatus = "Checking Antigravity on this Mac…"
-        revision += 1
-        changed?()
+        sourcesChanged(discardReadings: false)
         return nil
     }
 
@@ -261,7 +266,7 @@ final class LocalSources: ObservableObject {
         googleQuotaConnected = false
         googleQuotaObservedAt = nil
         googleQuotaStatus = Self.googleQuotaHelp
-        invalidateHistory()
+        sourcesChanged(discardReadings: true)
     }
 
     private func cancelGoogleQuotaCheck() {
@@ -285,11 +290,21 @@ final class LocalSources: ObservableObject {
         guard let directory = AntigravityQuotaReader.directory(in: url) else { throw AntigravityQuotaError.permission }
         return try await AntigravityQuotaReader.read(directory: directory)
     }
-    private func invalidateHistory() {
+    private func publishConnectionState(discardReadings: Bool = false) {
+        guard active else { return }
+        do {
+            if try SharedStore.prepareLocal(hasSources: hasSources, discardReadings: discardReadings) {
+                connectionStateChanged?()
+            }
+        }
+        catch { notice = "Couldn’t update the widget’s connection status. Reopen AI Usage and try again." }
+    }
+
+    private func sourcesChanged(discardReadings: Bool, forgetHistory: Bool = false) {
         revision += 1
-        // Immediately drop previous totals on disconnect or replacement, even if a scan is in flight.
-        try? SharedStore.publishLocal(.init(summaries: [:]))
-        Task { await history.forget(); changed?() }
+        publishConnectionState(discardReadings: discardReadings)
+        if forgetHistory { Task { await history.forget(); changed?() } }
+        else { changed?() }
     }
     func cancelLogin() { account.cancel() }
     func toggleAccount() {
@@ -303,7 +318,7 @@ final class LocalSources: ObservableObject {
                 defaults.set(chatConnected, forKey:"chatConnected")
                 chatQuotaIssue = nil
                 keep(nil, for:.codex)
-                invalidateHistory()
+                sourcesChanged(discardReadings: !chatConnected)
             } catch {
                 notice = (error as? ChatGPTAccount.Problem)?.localizedDescription ?? "Could not connect to OpenAI. Try again."
             }
@@ -311,17 +326,20 @@ final class LocalSources: ObservableObject {
     }
 
     func toggleStatusLine(_ enabled: Bool) {
+        let wasEnabled = statusLineEnabled
         statusLineEnabled = enabled
         claudeSetupError = nil
         defaults.set(enabled, forKey:"claudeStatusLine")
-        if enabled { startListener() }
+        if enabled {
+            if !wasEnabled { sourcesChanged(discardReadings: false) }
+            startListener()
+        }
         else {
             stopListener()
             claudeRequestCopied = false
             keep(nil, for: .claude)
             defaults.removeObject(forKey: "statusToken")
-            revision += 1
-            changed?()
+            sourcesChanged(discardReadings: true)
         }
     }
     private func stopListener() {
@@ -457,6 +475,6 @@ final class LocalSources: ObservableObject {
             LocalSummary.build(histories: histories, limits: connectedLimits, issues: issues, prices: prices, now: now)
         }.value
         guard active && run == revision else { return nil }
-        return .init(summaries: summaries)
+        return .init(summaries: summaries, hasSources: hasSources)
     }
 }
