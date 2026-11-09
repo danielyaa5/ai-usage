@@ -4,7 +4,7 @@ import AIUsageKit
 extension HistoryProvider {
     var displayName: String {
         switch self {
-        case .claude: "Claude Code"
+        case .claude: "Claude"
         case .codex: "Codex / ChatGPT"
         case .antigravity: "Google Antigravity"
         }
@@ -39,16 +39,29 @@ struct ReadingState: View {
 extension LocalSources {
     func connectionLabel(_ provider: HistoryProvider) -> String {
         let history = selected.contains(provider)
+        if provider == .claude, let desktop = claudeDesktop {
+            if enteredDesktopUsage != nil { return "Entered quota" }
+            switch desktop {
+            case .checking: return "Checking Claude Desktop"
+            case .unavailable(.access), .unavailable(.unsupported): return "Needs attention"
+            case .unavailable: return "Waiting for Desktop"
+            case .reading: return history ? "History and saved quota" : "Saved desktop quota"
+            }
+        }
         if provider == .claude && claudeSetupError != nil || provider == .codex && chatQuotaIssue != nil { return "Needs attention" }
         if lastQuotaReading(provider) != nil { return history ? "History and quota" : "Quota connected" }
         switch provider {
-        case .claude where statusLineEnabled: return claudeSetupError == nil ? "Waiting for quota" : "Needs attention"
+        case .claude where statusLineEnabled: return "Waiting for Terminal"
         case .codex where chatConnected: return "Signed in"
         case .antigravity where googleQuotaConnected: return "Waiting for quota"
         default: return history ? "History selected" : "Not connected"
         }
     }
     func connectionColor(_ provider: HistoryProvider) -> Color {
+        if provider == .claude, let desktop = claudeDesktop {
+            if enteredDesktopUsage != nil { return .secondary }
+            return desktop.windows.first.map { $0.isStale() ? .orange : .green } ?? .orange
+        }
         if provider == .claude && claudeSetupError != nil || provider == .codex && chatQuotaIssue != nil { return .orange }
         if lastQuotaReading(provider) != nil { return .green }
         if provider == .claude && statusLineEnabled || provider == .codex && chatConnected ||
@@ -83,7 +96,8 @@ struct HistoryConnection: View {
                 }
             }
             Text(local.messages[provider] ?? (local.selected.contains(provider) ? "Folder selected" :
-                "Choose your \(provider.folder) folder to count recorded requests and tokens."))
+                (provider == .claude ? "Choose your .claude folder to count requests and tokens from Claude Code sessions on this Mac." :
+                 "Choose your \(provider.folder) folder to count recorded requests and tokens.")))
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Button(local.selected.contains(provider) ? "Choose another folder…" : "Connect history…") { local.pick(provider) }
                 .accessibilityIdentifier("history-" + provider.rawValue)
@@ -94,6 +108,8 @@ struct HistoryConnection: View {
 struct QuotaConnection: View {
     let provider: HistoryProvider
     @ObservedObject var local: LocalSources
+    @State private var showsTerminal = false
+    @State private var entersUsage = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 13) {
@@ -107,34 +123,66 @@ struct QuotaConnection: View {
     }
 
     @ViewBuilder private var claude: some View {
-        if let date = local.lastQuotaReading(.claude), local.statusLineReady, local.claudeSetupError == nil {
-            ReadingState(text: "Connected · Last reading \(Self.time(date))", color: .green)
-            Text("Claude Code sends updated limits after a reply.").foregroundStyle(.secondary)
-            HStack {
-                Button(local.claudeRequestCopied ? "Copied · Copy again" : "Copy setup request again") { local.copyClaudeSetupRequest() }
-                    .accessibilityIdentifier("claude-copy-setup")
-                Button("Disconnect") { local.toggleStatusLine(false) }
+        if let desktop = local.claudeDesktop {
+            if !local.desktopWindows.isEmpty {
+                ForEach(local.desktopWindows) { window in
+                    HStack {
+                        Text(window.label)
+                        Spacer()
+                        Text(Format.percent(window.leftPct) + " left").fontWeight(.semibold).monospacedDigit()
+                    }
+                    .accessibilityElement(children: .combine)
+                }
+                if let manual = local.enteredDesktopUsage {
+                    ReadingState(text: "Entered \(Self.time(manual.recordedAt))", color: .secondary)
+                } else if let window = local.desktopWindows.first, let date = window.observedAt {
+                    ReadingState(text: "Last saved by Claude Desktop \(Self.time(date))", color: window.isStale() ? .orange : .green)
+                }
+            } else if case .checking = desktop {
+                ReadingState(text: "Checking Claude Desktop…", color: .secondary)
             }
-        } else {
-            Text("See when your five-hour and weekly limits reset.").foregroundStyle(.secondary)
-            VStack(alignment: .leading, spacing: 9) {
-                instruction(1, "Copy the setup request and paste it into Claude Code.")
-                instruction(2, "Approve the change if asked, then send a message.")
-            }
-            HStack {
-                Button(local.claudeRequestCopied ? "Copy setup request again" : "Copy setup request") { local.copyClaudeSetupRequest() }
-                    .buttonStyle(.borderedProminent).controlSize(.large).accessibilityIdentifier("claude-copy-setup")
-                if local.statusLineEnabled {
-                    Button("Disconnect") { local.toggleStatusLine(false) }.buttonStyle(.link)
+            if case .unavailable(let problem) = desktop {
+                ReadingState(text: problem.rawValue, color: .orange)
+                if problem == .access {
+                    Button("Choose Claude folder again…") { local.connectClaudeDesktop() }
                 }
             }
-            if let issue = local.claudeSetupError {
-                ReadingState(text: issue, color: .orange)
-            } else {
-                ReadingState(text: local.claudeRequestCopied ? "Copied · Waiting for Claude’s first reading" :
-                    (local.statusLineEnabled ? "Waiting for Claude’s first reading" : "No reading yet"), color: .orange)
+            Text("The widget updates when Claude Desktop saves a reading. Claude’s Usage page shows current limits and reset times.")
+                .font(.callout).foregroundStyle(.secondary)
+            HStack {
+                Button("Check for a new reading") { local.changed?() }.accessibilityIdentifier("claude-desktop-refresh")
+                Button("Disconnect Desktop") { local.disconnectClaudeDesktop() }.buttonStyle(.link)
+            }
+            if desktop != .checking && (desktop.windows.first?.isStale() != false || local.enteredDesktopUsage != nil) {
+                Button("Enter current percentages…") { entersUsage = true }.buttonStyle(.link)
+                    .sheet(isPresented: $entersUsage) { ClaudeUsageEntryForm(local: local) }
+            }
+        } else {
+            Text("Show the five-hour and weekly percentages Claude Desktop saves on this Mac. Click Connect, then Allow in the folder picker.")
+                .foregroundStyle(.secondary)
+            Button("Connect Claude Desktop…") { local.connectClaudeDesktop() }
+                .buttonStyle(.borderedProminent).controlSize(.large).accessibilityIdentifier("claude-desktop-connect")
+            if let date = local.lastQuotaReading(.claude), local.statusLineReady {
+                ReadingState(text: "Terminal connected · Last reading \(Self.time(date))", color: .green)
+            }
+            DisclosureGroup("I use Claude Code in Terminal", isExpanded: $showsTerminal) {
+                VStack(alignment: .leading, spacing: 9) {
+                    Text("Use this option in the interactive Claude Code terminal. The desktop Code tab can use the connection above.")
+                    instruction(1, "Paste the copied request into a terminal session running Claude Code.")
+                    instruction(2, "Approve the change if asked, then send a message in that terminal.")
+                    Button(local.claudeRequestCopied ? "Copy terminal request again" : "Copy terminal setup request") { local.copyClaudeSetupRequest() }
+                        .accessibilityIdentifier("claude-copy-setup")
+                    if let issue = local.claudeSetupError { ReadingState(text: issue, color: .orange) }
+                    else if local.statusLineEnabled, local.lastQuotaReading(.claude) == nil {
+                        ReadingState(text: local.claudeRequestCopied ? "Copied · Waiting for a terminal reading" :
+                                     "Waiting for a terminal reading", color: .orange)
+                    }
+                    if local.statusLineEnabled { Button("Disconnect Terminal") { local.toggleStatusLine(false) }.buttonStyle(.link) }
+                }
+                .font(.callout).foregroundStyle(.secondary).padding(.vertical, 5)
             }
         }
+        Link("Open Claude usage ↗", destination: Self.claudeUsageURL)
     }
 
     @ViewBuilder private var chatGPT: some View {
@@ -183,5 +231,47 @@ struct QuotaConnection: View {
 
     private static func time(_ date: Date) -> String {
         date.formatted(date: Calendar.current.isDateInToday(date) ? .omitted : .abbreviated, time: .shortened)
+    }
+    static let claudeUsageURL = URL(string: "https://claude.ai/settings/usage")!
+}
+
+private struct ClaudeUsageEntryForm: View {
+    @ObservedObject var local: LocalSources
+    @Environment(\.dismiss) private var dismiss
+    @State private var fiveHour = ""
+    @State private var weekly = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Record Claude usage").font(.title2.bold())
+            Text("Enter the percentages shown as used on Claude’s Usage page. Leave a missing limit blank.")
+            Link("Open Claude usage ↗", destination: QuotaConnection.claudeUsageURL)
+            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
+                GridRow { Text("Current session"); field("Five-hour percent used", $fiveHour) }
+                GridRow { Text("Weekly · All models"); field("Weekly percent used", $weekly) }
+            }
+            Text("The widget labels these numbers as entered until Claude Desktop saves a newer reading.")
+                .font(.callout).foregroundStyle(.secondary)
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Save reading") {
+                    guard let entry else { return }
+                    local.recordDesktopUsage(entry)
+                    dismiss()
+                }.keyboardShortcut(.defaultAction).disabled(entry == nil)
+            }
+        }
+        .padding(22).frame(width: 400).fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var entry: ClaudeDesktopUsage.Entry? {
+        .init(fiveHourText: fiveHour, weeklyText: weekly, at: Date())
+    }
+    private func field(_ name: String, _ value: Binding<String>) -> some View {
+        HStack(spacing: 6) {
+            TextField(name, text: value, prompt: Text("0–100")).labelsHidden().accessibilityLabel(name).frame(width: 72)
+            Text("% used").foregroundStyle(.secondary)
+        }
     }
 }

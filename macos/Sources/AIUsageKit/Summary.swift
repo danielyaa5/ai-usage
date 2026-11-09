@@ -119,6 +119,8 @@ public struct LimitWindow: Codable, Equatable, Sendable, Identifiable {
     public var level: String
     public var resetsAt: Date?
     public var observedAt: Date?
+    /// Present only for percentages a person copied from their Claude Usage page.
+    public var manuallyEntered: Bool?
 
     public var id: String { "\(group ?? "")|\(label)" }
 

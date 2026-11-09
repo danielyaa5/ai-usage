@@ -118,14 +118,17 @@ extension LimitWindow {
     /// The same, longest first, for a layout to take the first that fits.
     func captions(now: Date) -> [String] {
         let ago = Format.ago(observedAt, now: now)
+        if manuallyEntered == true { return ["entered \(ago)", "entered"] }
         if resetPassed(now: now) { return ["reset due · as of \(ago)", "reset due · \(ago)", "reset due"] }
-        if isStale(now: now) { return ["as of \(ago)", ago] }
+        if isStale(now: now) || (resetsAt == nil && observedAt != nil) { return ["as of \(ago)", ago] }
         return [Format.resets(resetsAt, now: now)] + (Format.remaining(until: resetsAt, now: now).map { [$0] } ?? [])
     }
 
     /// The short form for table cells: "2h 15m" to the reset, "reset due", or nothing.
     func untilReset(now: Date) -> String {
         if resetPassed(now: now) { return "reset due" }
+        if manuallyEntered == true { return "entered" }
+        if resetsAt == nil, observedAt != nil { return Format.ago(observedAt, now: now) }
         return Format.remaining(until: resetsAt, now: now) ?? ""
     }
 }
@@ -547,7 +550,14 @@ struct LimitsTable: View {
     @Environment(\.colorScheme) private var scheme
 
     private var titleSize: CGFloat { roomy ? 12 : 11 }
-    private var corner: String { roomy ? "" : "% left · resets in" }
+    private var corner: String {
+        guard !roomy else { return "" }
+        let windows = plans.flatMap(\.windows)
+        if windows.contains(where: { $0.resetsAt == nil }) {
+            return windows.allSatisfy { $0.resetsAt == nil } ? "% left · last read" : "% left"
+        }
+        return "% left · resets in"
+    }
 
     /// Wide enough for the longest label, so no label is cut and the limit columns share the rest.
     private var labelWidth: CGFloat {
@@ -794,7 +804,11 @@ struct AllPlansSmall: View {
     }
 
     private func plainCaption(_ window: LimitWindow, long: Bool) -> String {
-        guard let left = Format.remaining(until: window.resetsAt, now: entry.date) else { return window.name }
+        if window.manuallyEntered == true { return "\(window.name) · entered" }
+        guard let left = Format.remaining(until: window.resetsAt, now: entry.date) else {
+            return window.resetsAt == nil && window.observedAt != nil ?
+                "\(window.name) · \(Format.ago(window.observedAt, now: entry.date))" : window.name
+        }
         return long ? "\(window.name) · resets in \(left)" : "\(window.name) · \(left)"
     }
 

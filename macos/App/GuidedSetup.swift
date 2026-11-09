@@ -52,7 +52,7 @@ struct GuidedContent: View {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(provider.displayName).font(.headline)
                                 Text(provider == .codex ? "Codex history and ChatGPT limits" :
-                                     provider == .claude ? "Claude Code history and plan limits" : "Antigravity history and Google quota")
+                                     provider == .claude ? "Desktop plan limits and Claude Code history" : "Antigravity history and Google quota")
                                     .font(.callout).foregroundStyle(.secondary)
                             }
                             Spacer()
@@ -116,7 +116,7 @@ struct SetupFooter: View {
     private var hasStartedConnection: Bool {
         guard let provider = journey.provider else { return false }
         return local.selected.contains(provider) ||
-            (provider == .claude && local.statusLineEnabled) ||
+            (provider == .claude && (local.claudeDesktop != nil || local.statusLineEnabled)) ||
             (provider == .codex && (local.chatConnected || local.accountBusy)) ||
             (provider == .antigravity && local.googleQuotaConnected)
     }

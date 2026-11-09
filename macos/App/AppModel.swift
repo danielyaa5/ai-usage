@@ -163,7 +163,7 @@ final class AppModel: ObservableObject {
             guard let summary = reading.summary else { return "\(range):none:\(reading.error != nil)" }
             let plans = summary.plans.map { plan in
                 plan.vendor + ":" + plan.windows.map { window in
-                    "\(window.id)=\(Int(window.leftPct.rounded()))@\(Int(window.resetsAt?.timeIntervalSince1970 ?? 0))"
+                    "\(window.id)=\(Int(window.leftPct.rounded()))@\(Int((window.resetsAt ?? window.observedAt)?.timeIntervalSince1970 ?? 0))"
                 }.joined(separator: ",") + ":" + (plan.warning ?? "") + ":\(Int(plan.cost))"
             }.joined(separator: ";")
             let totals = summary.totals

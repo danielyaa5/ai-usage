@@ -15,9 +15,16 @@ The menu bar app and desktop widgets work on Apple silicon Macs running macOS 14
 | Codex history (`.codex`) | Recorded requests and tokens in current and archived sessions, plus limit windows when a session includes them |
 | Antigravity history (`.gemini`) | Recorded usage in the IDE and CLI conversation databases. Only checkpointed metadata is read. |
 | Sign in with ChatGPT | Account-wide limit readings directly from OpenAI, including on a Mac with no Codex history |
-| Claude Code limits | In Claude Code’s connection, choose **Copy setup request**. Paste it into Claude Code, approve the change if asked, then send a message. Claude Code configures its own status line. The request asks it to preserve an existing custom display. **Waiting for Claude’s first reading** changes to **Connected** when a five-hour or weekly reading arrives. |
+| Claude Desktop limits | Choose **Connect Claude Desktop…**, then **Allow** in the folder picker. The widget shows the most recent five-hour or weekly percentage Claude saved on this Mac, with its original observation time. **Open Claude usage** shows current limits and reset times. |
+| Claude Code in Terminal | If you use the interactive terminal CLI, expand **I use Claude Code in Terminal** and paste its setup request into that terminal session. Approve the change if asked, then send a message there. The desktop Code tab uses the Desktop connection above. |
 
 History covers activity recorded on this Mac. If there are no requests yet, complete a request in the connected tool, let it save and click **Refresh now**. Signing in for limits alone does not supply historic token totals. An API-equivalent estimate uses the bundled price table and excludes requests whose model has no listed price.
+
+## Claude Desktop quota
+
+This connection reads only `plan-usage-history.json` in the Claude folder you authorize. AI Usage checks about every five minutes. **Check for a new reading** rereads the same file. Claude Desktop controls when it saves samples. A sample can include either or both windows and contains no reset time. The widget shows the percentage left from the latest single sample, including its age.
+
+If the saved reading is old or missing, **Open Claude usage** takes you to the account’s Usage page. **Enter current percentages…** lets you record the percentages shown as used there. The widget marks these readings as entered until Claude Desktop saves a newer sample. Disconnecting Desktop removes this app’s folder grant and any entered reading. A previously configured terminal connection resumes when Desktop is disconnected.
 
 ## Google Antigravity quota
 

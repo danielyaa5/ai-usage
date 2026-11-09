@@ -1,6 +1,15 @@
 import AppKit
 import AIUsageKit
 
+enum ClaudeDesktopConnection: Equatable {
+    case checking, reading([LimitWindow]), unavailable(ClaudeDesktopUsage.Problem)
+
+    var windows: [LimitWindow] {
+        if case .reading(let values) = self { return values }
+        return []
+    }
+}
+
 @MainActor
 final class LocalSources: ObservableObject {
     private let defaults: UserDefaults
@@ -20,6 +29,8 @@ final class LocalSources: ObservableObject {
     @Published private(set) var statusLineReady = false
     @Published private(set) var claudeRequestCopied = false
     @Published private(set) var claudeSetupError: String?
+    @Published private(set) var claudeDesktop: ClaudeDesktopConnection?
+    @Published private(set) var enteredDesktopUsage: ClaudeDesktopUsage.Entry?
     @Published private(set) var googleQuotaConnected = false
     @Published private(set) var googleQuotaObservedAt: Date?
     private static let googleQuotaHelp = "See the quota Google reports for Gemini and other model groups. Sign in to the Antigravity desktop app on this Mac and keep it running. Connect opens it and asks for folder access if needed."
@@ -32,6 +43,7 @@ final class LocalSources: ObservableObject {
     @Published private var windows: [HistoryProvider: [LimitWindow]] = [:]
 
     func lastQuotaReading(_ provider: HistoryProvider) -> Date? {
+        if provider == .claude, claudeDesktop != nil { return desktopWindows.first?.observedAt }
         if provider == .antigravity { return googleQuotaObservedAt }
         if provider == .codex && !chatConnected { return codexHistoryObservedAt }
         return windows[provider]?.compactMap(\.observedAt).max()
@@ -42,6 +54,12 @@ final class LocalSources: ObservableObject {
         selected = Set(HistoryProvider.allCases.filter { defaults.data(forKey: bookmarkKey($0)) != nil })
         chatConnected = defaults.bool(forKey: "chatConnected")
         statusLineEnabled = defaults.bool(forKey: "claudeStatusLine")
+        if defaults.data(forKey: "claudeDesktopFolder") != nil {
+            claudeDesktop = .checking
+            if let data = defaults.data(forKey: "claudeDesktopEntry") {
+                enteredDesktopUsage = try? JSONDecoder().decode(ClaudeDesktopUsage.Entry.self, from: data)
+            }
+        }
         googleQuotaConnected = defaults.data(forKey: "googleQuotaFolder") != nil
         if googleQuotaConnected { googleQuotaStatus = "Waiting for the next quota check…" }
         for provider in [HistoryProvider.claude, .codex] {
@@ -97,6 +115,84 @@ final class LocalSources: ObservableObject {
         if provider == .codex { codexHistoryObservedAt = nil }
         messages[provider] = nil
         invalidateHistory()
+    }
+
+    private static var claudeDesktopDirectory: URL? {
+        guard let home = getpwuid(getuid())?.pointee.pw_dir else { return nil }
+        return URL(fileURLWithPath: String(cString: home), isDirectory: true)
+            .appendingPathComponent("Library/Application Support/Claude", isDirectory: true)
+    }
+
+    func connectClaudeDesktop() {
+        guard NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.anthropic.claudefordesktop") != nil,
+              let folder = Self.claudeDesktopDirectory else {
+            notice = "Install and open Claude Desktop on this Mac, sign in, and try again."
+            return
+        }
+        let panel = NSOpenPanel()
+        panel.prompt = "Allow"
+        panel.message = "Allow access to the Claude folder. AI Usage reads only the saved plan usage file."
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = false
+        panel.directoryURL = folder
+        guard panel.runModal() == .OK, let selected = panel.url else { return }
+        guard selected.standardizedFileURL == folder.standardizedFileURL else {
+            notice = "Choose the Claude folder inside Library/Application Support. The connection button opens that folder for you."
+            return
+        }
+        do {
+            let grant = try selected.bookmarkData(options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess],
+                                                  includingResourceValuesForKeys: nil, relativeTo: nil)
+            defaults.set(grant, forKey: "claudeDesktopFolder")
+            // Keep an already configured terminal connection intact for a future switch back.
+            stopListener()
+            claudeDesktop = .checking
+            revision += 1
+            changed?()
+        } catch { notice = "Couldn’t save read-only access to the Claude folder. Try again." }
+    }
+
+    func disconnectClaudeDesktop() {
+        defaults.removeObject(forKey: "claudeDesktopFolder")
+        defaults.removeObject(forKey: "claudeDesktopEntry")
+        enteredDesktopUsage = nil
+        claudeDesktop = nil
+        if statusLineEnabled { startListener() }
+        invalidateHistory()
+    }
+
+    var desktopWindows: [LimitWindow] {
+        enteredDesktopUsage?.windows ?? claudeDesktop?.windows ?? []
+    }
+
+    func recordDesktopUsage(_ entry: ClaudeDesktopUsage.Entry) {
+        guard claudeDesktop != nil, let data = try? JSONEncoder().encode(entry) else { return }
+        defaults.set(data, forKey: "claudeDesktopEntry")
+        enteredDesktopUsage = entry
+        revision += 1
+        changed?()
+    }
+
+    private func readClaudeDesktop(now: Date) async -> ClaudeDesktopConnection {
+        guard let grant = defaults.data(forKey: "claudeDesktopFolder") else { return .unavailable(.access) }
+        do {
+            var stale = false
+            let folder = try URL(resolvingBookmarkData: grant, options: [.withSecurityScope, .withoutUI],
+                                 relativeTo: nil, bookmarkDataIsStale: &stale)
+            guard folder.standardizedFileURL == Self.claudeDesktopDirectory?.standardizedFileURL,
+                  folder.startAccessingSecurityScopedResource() else { return .unavailable(.access) }
+            defer { folder.stopAccessingSecurityScopedResource() }
+            if stale {
+                let renewed = try folder.bookmarkData(options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess],
+                                                      includingResourceValuesForKeys: nil, relativeTo: nil)
+                defaults.set(renewed, forKey: "claudeDesktopFolder")
+            }
+            let values = try await Task.detached(priority: .utility) {
+                try ClaudeDesktopUsage.windows(in: folder, now: now)
+            }.value
+            return .reading(values)
+        } catch { return .unavailable((error as? ClaudeDesktopUsage.Problem) ?? .access) }
     }
 
     @discardableResult
@@ -233,7 +329,7 @@ final class LocalSources: ObservableObject {
         listener?.stop(); listener = nil; statusLineReady = false
     }
     private func startListener() {
-        guard active, statusLineEnabled, listener == nil else { return }
+        guard active, statusLineEnabled, claudeDesktop == nil, listener == nil else { return }
         let generation = listenerGeneration
         let token = defaults.string(forKey:"statusToken") ?? UUID().uuidString
         defaults.set(token,forKey:"statusToken")
@@ -323,7 +419,17 @@ final class LocalSources: ObservableObject {
         guard active && run == revision else { return nil }
         var connectedLimits: [HistoryProvider:[LimitWindow]] = [:]
         if chatConnected { connectedLimits[.codex] = windows[.codex] ?? [] }
-        if statusLineEnabled { connectedLimits[.claude] = windows[.claude] ?? [] }
+        if claudeDesktop != nil {
+            let state = await readClaudeDesktop(now: now)
+            guard active && run == revision else { return nil }
+            if state != claudeDesktop { claudeDesktop = state }
+            if let entry = enteredDesktopUsage, let saved = state.windows.first?.observedAt, saved >= entry.recordedAt {
+                enteredDesktopUsage = nil
+                defaults.removeObject(forKey: "claudeDesktopEntry")
+            }
+            connectedLimits[.claude] = desktopWindows
+            if enteredDesktopUsage == nil, case .unavailable(let problem) = state { issues[.claude] = problem.rawValue }
+        } else if statusLineEnabled { connectedLimits[.claude] = windows[.claude] ?? [] }
         codexHistoryObservedAt = histories[.codex]?.windows.compactMap(\.observedAt).max()
         if messages != status { messages = status }
         if googleQuotaConnected {

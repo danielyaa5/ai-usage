@@ -78,7 +78,7 @@ private struct StoreScene: View {
                         .font(.system(size:52,weight:.bold)).tracking(-2).fixedSize(horizontal:false,vertical:true)
                     Text(["Requests, tokens and estimated API value in a desktop widget.",
                           "Set up each connection, then add a widget for your usage or remaining quota.",
-                          "See when your Claude, ChatGPT and Google limits reset, right on your desktop."][page-1])
+                          "See what remains for each plan, with reset times when the provider reports them."][page-1])
                         .font(.system(size:18)).foregroundStyle(ink.opacity(0.76)).fixedSize(horizontal:false,vertical:true)
                     Spacer()
                     Text(page == 2 ? "Local setup" : "Sample widget data")
