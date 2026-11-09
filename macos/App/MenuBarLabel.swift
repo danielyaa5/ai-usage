@@ -53,7 +53,7 @@ struct MenuBarSymbol: View {
         let ink = dark ? sage : forest
         let trackColor = dark ? forest : sage
         let mark = NSImage(named: dark ? "MenuMarkDark" : "MenuMarkLight")
-        let markWidth: CGFloat = 35
+        let markWidth = mark?.size.width ?? 23
         let attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 9.5, weight: .semibold), .foregroundColor: ink
         ]
