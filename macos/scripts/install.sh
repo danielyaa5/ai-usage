@@ -16,7 +16,7 @@ LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchSe
 [ -d "$SOURCE" ] || { echo "No app at $SOURCE; run scripts/build.sh first." >&2; exit 1; }
 codesign --verify --deep --strict "$SOURCE"
 ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$SOURCE/Contents/Info.plist")
-if [[ "$ID" == *.freshinstall.AIUsage || "$ID" == *.setuptest.AIUsage ]]; then
+if [[ "$ID" == *.freshinstall.AIUsage || "$ID" == *.setuptest.AIUsage || "$ID" == *.claudefreshtest.AIUsage ]]; then
   echo "Copy $(basename "$SOURCE") to Applications and open it for first-run setup." >&2
   exit 1
 fi

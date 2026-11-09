@@ -3,6 +3,8 @@
 #
 #   macos/scripts/build.sh        # -> macos/build.noindex/AI Usage.app
 #   macos/scripts/build.sh --fresh-install   # Separate first-run app, settings, widgets and links
+#   macos/scripts/build.sh --setup-test     # Existing private test app with automatic Claude quota
+#   macos/scripts/build.sh --claude-fresh-test  # Isolated first launch and Claude sign-in
 #
 # Reads DEVELOPMENT_TEAM and AI_USAGE_BUNDLE_PREFIX from the environment or macos/Local.xcconfig,
 # and SIGN_IDENTITY (a certificate name or SHA-1) when the team has more than one certificate.
@@ -73,19 +75,34 @@ case "${1:-}" in
     DISPLAY_NAME="AI Usage Setup Test"
     URL_SCHEME=aiusage-setup-test
     ;;
+  --claude-fresh-test)
+    OUT="$OUT/ClaudeFreshTest"
+    PREFIX="$PREFIX.claudefreshtest"
+    DISPLAY_NAME="AI Usage Claude Fresh Test"
+    URL_SCHEME=aiusage-claude-fresh-test
+    ;;
   "") ;;
-  *) echo "Usage: $0 [--fresh-install | --setup-test]" >&2; exit 1 ;;
+  *) echo "Usage: $0 [--fresh-install | --setup-test | --claude-fresh-test]" >&2; exit 1 ;;
 esac
 DERIVED="$OUT/DerivedData"
 APP="$OUT/$DISPLAY_NAME.app"
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
+TEST_OPTIONS=()
+case "${1:-}" in
+  --setup-test|--claude-fresh-test)
+    TEST_OPTIONS=("SWIFT_ACTIVE_COMPILATION_CONDITIONS=CLAUDE_QUOTA_TEST" "CURRENT_PROJECT_VERSION=13")
+    CLAUDE_BIN=${CLAUDE_TEST_BINARY:-$(command -v claude || true)}
+    [[ -n "$CLAUDE_BIN" && -x "$CLAUDE_BIN" ]] || { echo "Install Claude Code to build this private test." >&2; exit 1; }
+    codesign --verify --strict -R '=anchor apple generic and identifier "com.anthropic.claude-code" and certificate leaf[subject.OU] = "Q6L2SF6YDW"' "$CLAUDE_BIN"
+    ;;
+esac
 xcodegen generate --spec project.yml --quiet
 xcodebuild -project AIUsage.xcodeproj -scheme AIUsage -configuration Release -destination 'platform=macOS' \
   -derivedDataPath "$DERIVED" DEVELOPMENT_TEAM="$TEAM" AI_USAGE_BUNDLE_PREFIX="$PREFIX" \
   AI_USAGE_DISPLAY_NAME="$DISPLAY_NAME" AI_USAGE_URL_SCHEME="$URL_SCHEME" \
-  ARCHS=arm64 CODE_SIGNING_ALLOWED=NO build -quiet
+  ARCHS=arm64 CODE_SIGNING_ALLOWED=NO ${TEST_OPTIONS[@]+"${TEST_OPTIONS[@]}"} build -quiet
 
 # Keep one copy: LaunchServices and the widget gallery get confused by several.
 BUILT="$DERIVED/Build/Products/Release/AI Usage.app"
@@ -93,6 +110,12 @@ rm -rf "$APP"
 ditto "$BUILT" "$APP"
 "$LSREGISTER" -u "$BUILT" 2>/dev/null || true
 rm -rf "$BUILT"
+
+if [[ -n "${CLAUDE_BIN:-}" && ${#TEST_OPTIONS[@]} -gt 0 ]]; then
+  mkdir -p "$APP/Contents/Helpers"
+  cp -L "$CLAUDE_BIN" "$APP/Contents/Helpers/claude"
+  codesign --verify --strict "$APP/Contents/Helpers/claude"
+fi
 
 GROUP=$(/usr/libexec/PlistBuddy -c 'Print :AIUsageAppGroup' "$APP/Contents/Info.plist")
 case "$GROUP" in

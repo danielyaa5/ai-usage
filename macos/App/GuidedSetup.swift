@@ -38,6 +38,13 @@ struct GuidedContent: View {
     @ObservedObject var model: AppModel
     @ObservedObject var local: LocalSources
     let journey: SetupJourney
+    private var claudeDescription: String {
+        #if CLAUDE_QUOTA_TEST
+        "Automatic plan limits and Claude Code history"
+        #else
+        "Desktop plan limits and Claude Code history"
+        #endif
+    }
     var body: some View {
         switch journey.step {
         case .tools:
@@ -52,7 +59,7 @@ struct GuidedContent: View {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(provider.displayName).font(.headline)
                                 Text(provider == .codex ? "Codex history and ChatGPT limits" :
-                                     provider == .claude ? "Desktop plan limits and Claude Code history" : "Antigravity history and Google quota")
+                                     provider == .claude ? claudeDescription : "Antigravity history and Google quota")
                                     .font(.callout).foregroundStyle(.secondary)
                             }
                             Spacer()
@@ -115,6 +122,9 @@ struct SetupFooter: View {
     }
     private var hasStartedConnection: Bool {
         guard let provider = journey.provider else { return false }
+        #if CLAUDE_QUOTA_TEST
+        if provider == .claude, local.claudeLive.enabled { return true }
+        #endif
         return local.selected.contains(provider) ||
             (provider == .claude && (local.claudeDesktop != nil || local.statusLineEnabled)) ||
             (provider == .codex && (local.chatConnected || local.accountBusy)) ||

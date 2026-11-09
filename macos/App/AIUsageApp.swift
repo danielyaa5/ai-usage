@@ -82,6 +82,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return false
     }
 
+    #if CLAUDE_QUOTA_TEST
+    func applicationWillTerminate(_ notification: Notification) { ClaudeQuotaProcess.stopAll() }
+    #endif
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 }
 

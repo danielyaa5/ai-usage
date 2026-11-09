@@ -55,7 +55,9 @@ From the repository root, run `macos/scripts/build.sh` and `macos/scripts/instal
 
 For an isolated first-run test, build with `macos/scripts/build.sh --fresh-install`, then copy **AI Usage Fresh Install.app** from `macos/build.noindex/FreshInstall` to Applications and open it. It has its own folder permissions, preferences, widget data and links. Select **AI Usage Fresh Install** in the widget gallery. The first-run window appears the first time you launch that identity.
 
-If your existing test copy already has connections, `macos/scripts/build.sh --setup-test` builds **AI Usage Setup Test.app** with its own empty setup. Search for **AI Usage Setup Test** to place that copy’s widgets.
+For the private Claude quota trial, `macos/scripts/build.sh --setup-test` updates **AI Usage Setup Test** and preserves that app’s connections. To start with a separate Claude sign-in and a new setup, use `macos/scripts/build.sh --claude-fresh-test` and open **AI Usage Claude Fresh Test**. Each copy has its own widgets. In guided setup, choose **Claude**, then **Connect Claude**. A new user signs in with Claude in their browser. Local history is optional.
+
+These two development builds copy the build Mac’s original, signature-verified Claude Code executable into the test app. The trial was tested with Claude Code 2.1.319. It uses the experimental structured usage check and skips transcript scanning. The regular app and App Store archive exclude automatic Claude quota and its helper.
 
 Run `macos/release/archive.sh` to archive, export and verify a local Mac App Store installer package. It uses Xcode’s configured developer account. See the [release files](release/README.md) and [privacy policy](../docs/privacy.md).
 

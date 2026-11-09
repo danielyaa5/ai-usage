@@ -39,6 +39,9 @@ struct ReadingState: View {
 extension LocalSources {
     func connectionLabel(_ provider: HistoryProvider) -> String {
         let history = selected.contains(provider)
+        #if CLAUDE_QUOTA_TEST
+        if provider == .claude, claudeLive.enabled { return claudeLive.label }
+        #endif
         if provider == .claude, let desktop = claudeDesktop {
             if enteredDesktopUsage != nil { return "Entered quota" }
             switch desktop {
@@ -58,6 +61,9 @@ extension LocalSources {
         }
     }
     func connectionColor(_ provider: HistoryProvider) -> Color {
+        #if CLAUDE_QUOTA_TEST
+        if provider == .claude, claudeLive.enabled { return claudeLive.state == .current ? .green : .orange }
+        #endif
         if provider == .claude, let desktop = claudeDesktop {
             if enteredDesktopUsage != nil { return .secondary }
             return desktop.windows.first.map { $0.isStale() ? .orange : .green } ?? .orange
@@ -110,6 +116,7 @@ struct QuotaConnection: View {
     @ObservedObject var local: LocalSources
     @State private var showsTerminal = false
     @State private var entersUsage = false
+    @State private var showsSavedClaude = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 13) {
@@ -123,6 +130,17 @@ struct QuotaConnection: View {
     }
 
     @ViewBuilder private var claude: some View {
+        #if CLAUDE_QUOTA_TEST
+        ClaudeAutomaticConnection(connection: local.claudeLive)
+        if !local.claudeLive.enabled {
+            DisclosureGroup("Use saved readings instead", isExpanded: $showsSavedClaude) { savedClaude }
+        }
+        #else
+        savedClaude
+        #endif
+    }
+
+    @ViewBuilder private var savedClaude: some View {
         if let desktop = local.claudeDesktop {
             if !local.desktopWindows.isEmpty {
                 ForEach(local.desktopWindows) { window in
@@ -275,3 +293,47 @@ private struct ClaudeUsageEntryForm: View {
         }
     }
 }
+
+#if CLAUDE_QUOTA_TEST
+private struct ClaudeAutomaticConnection: View {
+    @ObservedObject var connection: ClaudeTestQuota
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(connection.windows) { window in
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(window.label)
+                        if let reset = window.resetsAt { Text("Resets \(reset.formatted(date: .abbreviated, time: .shortened))").font(.caption).foregroundStyle(.secondary) }
+                    }
+                    Spacer()
+                    Text(Format.percent(window.leftPct) + " left").fontWeight(.semibold).monospacedDigit()
+                }
+            }
+            Text(connection.status).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            if let at = connection.windows.first?.observedAt {
+                Text("Last reading \(at.formatted(date: .abbreviated, time: .shortened))").font(.caption).foregroundStyle(.secondary)
+            }
+            if !connection.enabled {
+                Text("Connect to use Claude Code’s sign-in. AI Usage checks about every five minutes while it’s running. No Terminal window or message is needed.")
+                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Button("Connect Claude", action: connection.connect).buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("claude-live-connect")
+            } else {
+                HStack {
+                    if connection.state == .signingIn {
+                        Button("Cancel sign-in", action: connection.cancelSignIn)
+                    } else if connection.state == .needsSignIn {
+                        Button("Sign in with Claude…", action: connection.signIn).buttonStyle(.borderedProminent)
+                    } else {
+                        Button("Check now", action: connection.refreshNow).disabled(connection.state == .checking)
+                        if connection.state == .unavailable || connection.state == .failed {
+                            Button("Sign in with Claude…", action: connection.signIn)
+                        }
+                    }
+                    Button("Disconnect", action: connection.disconnect).buttonStyle(.link)
+                }
+            }
+        }
+    }
+}
+#endif

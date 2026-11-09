@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import AIUsageKit
 
 enum ClaudeDesktopConnection: Equatable {
@@ -13,6 +14,10 @@ enum ClaudeDesktopConnection: Equatable {
 @MainActor
 final class LocalSources: ObservableObject {
     private let defaults: UserDefaults
+    #if CLAUDE_QUOTA_TEST
+    let claudeLive: ClaudeTestQuota
+    private var claudeObserver: AnyCancellable?
+    #endif
     private let history = HistoryReader()
     private let account = ChatGPTAccount()
     private var listener: LoopbackServer?
@@ -44,10 +49,16 @@ final class LocalSources: ObservableObject {
     @Published private var windows: [HistoryProvider: [LimitWindow]] = [:]
 
     var hasSources: Bool {
-        !selected.isEmpty || chatConnected || claudeDesktop != nil || statusLineEnabled || googleQuotaConnected
+        #if CLAUDE_QUOTA_TEST
+        if claudeLive.enabled { return true }
+        #endif
+        return !selected.isEmpty || chatConnected || claudeDesktop != nil || statusLineEnabled || googleQuotaConnected
     }
 
     func lastQuotaReading(_ provider: HistoryProvider) -> Date? {
+        #if CLAUDE_QUOTA_TEST
+        if provider == .claude, claudeLive.enabled { return claudeLive.windows.first?.observedAt }
+        #endif
         if provider == .claude, claudeDesktop != nil { return desktopWindows.first?.observedAt }
         if provider == .antigravity { return googleQuotaObservedAt }
         if provider == .codex && !chatConnected { return codexHistoryObservedAt }
@@ -56,6 +67,11 @@ final class LocalSources: ObservableObject {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        #if CLAUDE_QUOTA_TEST
+        claudeLive = ClaudeTestQuota(defaults: defaults)
+        claudeObserver = claudeLive.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
+        claudeLive.changed = { [weak self] discard in self?.sourcesChanged(discardReadings: discard) }
+        #endif
         selected = Set(HistoryProvider.allCases.filter { defaults.data(forKey: bookmarkKey($0)) != nil })
         chatConnected = defaults.bool(forKey: "chatConnected")
         statusLineEnabled = defaults.bool(forKey: "claudeStatusLine")
@@ -85,6 +101,9 @@ final class LocalSources: ObservableObject {
         revision += 1
         if enabled { publishConnectionState() }
         if enabled && receiveStatusLine && statusLineEnabled { startListener() }
+        #if CLAUDE_QUOTA_TEST
+        if !enabled { claudeLive.suspend() }
+        #endif
         if !enabled { stopListener(); account.cancel(); cancelGoogleQuotaCheck() }
     }
 
@@ -437,7 +456,15 @@ final class LocalSources: ObservableObject {
         guard active && run == revision else { return nil }
         var connectedLimits: [HistoryProvider:[LimitWindow]] = [:]
         if chatConnected { connectedLimits[.codex] = windows[.codex] ?? [] }
-        if claudeDesktop != nil {
+        #if CLAUDE_QUOTA_TEST
+        if claudeLive.enabled {
+            await claudeLive.checkIfDue()
+            guard active && run == revision else { return nil }
+            connectedLimits[.claude] = claudeLive.windows
+            if claudeLive.state != .current { issues[.claude] = claudeLive.status }
+        }
+        #endif
+        if connectedLimits[.claude] == nil, claudeDesktop != nil {
             let state = await readClaudeDesktop(now: now)
             guard active && run == revision else { return nil }
             if state != claudeDesktop { claudeDesktop = state }
@@ -447,7 +474,7 @@ final class LocalSources: ObservableObject {
             }
             connectedLimits[.claude] = desktopWindows
             if enteredDesktopUsage == nil, case .unavailable(let problem) = state { issues[.claude] = problem.rawValue }
-        } else if statusLineEnabled { connectedLimits[.claude] = windows[.claude] ?? [] }
+        } else if connectedLimits[.claude] == nil, statusLineEnabled { connectedLimits[.claude] = windows[.claude] ?? [] }
         codexHistoryObservedAt = histories[.codex]?.windows.compactMap(\.observedAt).max()
         if messages != status { messages = status }
         if googleQuotaConnected {
