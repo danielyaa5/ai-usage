@@ -33,6 +33,7 @@ struct SettingsView: View {
                             switch model.settingsPage {
                             case .connections: connections
                             case .widgets: WidgetSettings(model: model)
+                            case .menuBar: MenuBarSettings(model: model)
                             case .advanced: AdvancedSettings(model: model, local: local)
                             }
                         }
@@ -85,6 +86,7 @@ struct SettingsView: View {
             }
             Divider().padding(.vertical, 9)
             navigation("Widgets", "square.grid.2x2", .widgets)
+            navigation("Menu Bar", "menubar.rectangle", .menuBar)
             navigation("Advanced", "gearshape", .advanced)
             Spacer()
             Button {
@@ -165,7 +167,6 @@ private struct AdvancedSettings: View {
     @ObservedObject var local: LocalSources
     @State private var address = ""
     @State private var openAtLogin = LoginItem.isEnabled
-    @AppStorage("showMenuBarIcon") private var showIcon = true
 
     var body: some View {
         Text("Advanced").font(.system(size: 27, weight: .bold)).accessibilityAddTraits(.isHeader)
@@ -201,7 +202,6 @@ private struct AdvancedSettings: View {
                 do { try LoginItem.set(value); openAtLogin = LoginItem.isEnabled }
                 catch { local.notice = "Couldn’t change Open at login. Check Login Items in System Settings." }
             }))
-            Toggle("Show icon in menu bar", isOn: $showIcon)
         }
     }
     private func save() { local.notice = model.setServer(address) }

@@ -48,7 +48,7 @@ struct UsageEntry: TimelineEntry {
     }
 
     /// Readings older than this say "Refresh needed" instead of passing for current.
-    static let staleAfter: TimeInterval = 45 * 60
+    static let staleAfter = Reading.staleAfter
 
     var dataAge: TimeInterval? {
         guard let at = fetchedAt ?? summary?.generatedAt else { return nil }

@@ -23,6 +23,16 @@ enum StoreImages {
         _ = try capture(model, file: "connections.png", in: folder)
         let now = Date()
         let local = UsageSummary.localSample(range:"7d",now:now)
+        let menu = AppModel.sampleMenuBar(local)
+        _ = try capture(menu, file: "menu-bar-settings.png", in: folder)
+        _ = try capture(MenuPanel(model: menu), size: nil, file: "menu-bar-panel.png", in: folder)
+        let meterImage = ImageRenderer(content: MenuBarSymbol(meters: menu.menuBarMeters(at: now), sample: true)
+            .foregroundStyle(Color.black).padding(4))
+        meterImage.scale = 3
+        if let image = meterImage.cgImage,
+           let data = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) {
+            try data.write(to: folder.appendingPathComponent("menu-bar-label.png"), options: .atomic)
+        }
         let entry = UsageEntry(date:now,summary:local,fetchedAt:now,error:nil,server:SharedStore.demoURL,vendor:nil,isSample:true)
         for page in 1...3 {
             let view = StoreScene(page:page, setup:setupImage, entry:entry)
@@ -50,11 +60,15 @@ enum StoreImages {
     }
 
     private static func capture(_ model: AppModel, file: String, in folder: URL) throws -> NSImage {
-        let controller = NSHostingController(rootView: SettingsView(model: model).environment(\.colorScheme, .light))
+        try capture(SettingsView(model: model), size: SettingsView.initialSize, file: file, in: folder)
+    }
+
+    private static func capture(_ view: some View, size: NSSize?, file: String, in folder: URL) throws -> NSImage {
+        let controller = NSHostingController(rootView: view.environment(\.colorScheme, .light))
         let window = NSWindow(contentViewController: controller)
         window.title = "AI Usage"
         window.appearance = NSAppearance(named: .aqua)
-        window.setContentSize(SettingsView.initialSize)
+        window.setContentSize(size ?? controller.view.fittingSize)
         window.displayIfNeeded()
         let content = controller.view
         content.layoutSubtreeIfNeeded()

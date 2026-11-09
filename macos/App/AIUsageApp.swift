@@ -22,22 +22,21 @@ enum AIUsageEntryPoint {
 
 struct AIUsageApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
-    @AppStorage("showMenuBarIcon") private var showIcon = true
-
     var body: some Scene {
-        MenuBarExtra(isInserted: Binding(get: { showIcon && !CommandLineMode.isActive }, set: { showIcon = $0 })) {
-            MenuPanel(model: delegate.model)
-        } label: {
-            Image(systemName: "chart.bar.fill")
-                .accessibilityLabel("AI Usage")
+        Settings { SettingsView(model: delegate.model) }
+        .commands {
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") { SettingsWindow.show(model: delegate.model) }
+                    .keyboardShortcut(",", modifiers: .command)
+            }
         }
-        .menuBarExtraStyle(.window)
     }
 }
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = AppModel()
+    private var menuBar: MenuBarController?
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         if CommandLineMode.isActive { NSApp.setActivationPolicy(.prohibited) }
@@ -49,6 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         RefreshUsageIntent.inApp = { [weak self] in self?.model.refresh() }
+        menuBar = MenuBarController(model: model)
         model.start()
         // Finder and Spotlight send an open-application event. Login items, services and widget
         // links have their own launch behavior and must not raise an extra settings window.

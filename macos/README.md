@@ -9,6 +9,8 @@ The menu bar app and desktop widgets work on Apple silicon Macs running macOS 14
 3. In **Add your widget**, preview **Plan limits** or **Usage totals**. Control-click your desktop, choose **Edit Widgets**, and search for **AI Usage**. Add **AI plan limits** for remaining quota or **AI usage totals** for recorded activity. A medium or larger plan widget can show one provider’s limits and seven-day totals.
 4. After setup, open **Settings** from the menu bar. **Connections** shows what each tool is sharing. **Guided setup** reopens the walkthrough. The Dock icon appears while the setup or Settings window is open. Closing the window keeps refresh running. **Advanced → Open at login** is optional.
 
+In **Settings → Menu Bar**, keep the gauge on its own or turn on a meter for Claude, Codex / ChatGPT, or Google Antigravity. Each meter shows that provider’s lowest current quota percentage. A dashed meter means there is no current reading. Click the gauge or a meter to open the full limits panel.
+
 | Source | What becomes available |
 |---|---|
 | Claude Code history (`.claude`) | Requests, tokens and estimated API value from recorded assistant usage |

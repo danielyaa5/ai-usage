@@ -3,7 +3,7 @@ import Foundation
 import WidgetKit
 import AIUsageKit
 
-enum SettingsPage { case connections, widgets, advanced }
+enum SettingsPage { case connections, widgets, menuBar, advanced }
 
 /// Reads the dashboard on a timer, keeps the shared reading the widgets fall back on, and asks macOS to
 /// redraw the widgets when what they show has changed.
@@ -20,16 +20,38 @@ final class AppModel: ObservableObject {
     @Published private(set) var setup: SetupJourney?
     @Published var showsSetup = true
     private let defaults: UserDefaults
+    @Published private(set) var meterProviders: Set<HistoryProvider>
+    @Published var showMenuBarIcon: Bool {
+        didSet { defaults.set(showMenuBarIcon, forKey: "showMenuBarIcon") }
+    }
     let local: LocalSources
 
     init(sampleSetup: Bool = false) {
         let config = sampleSetup ? SharedStore.Config() : SharedStore.loadConfig()
         let defaults = sampleSetup ? UserDefaults(suiteName: "store-preview-" + UUID().uuidString)! : .standard
         self.defaults = defaults
+        showMenuBarIcon = defaults.object(forKey: "showMenuBarIcon") as? Bool ?? true
+        meterProviders = Set((defaults.stringArray(forKey: "menuBarMeters") ?? []).compactMap(HistoryProvider.init(rawValue:)))
         setup = SetupJourney.restore(defaults.data(forKey: "setupJourney"))
         source = config.source
         server = config.server ?? UsageClient.defaultServer
         local = LocalSources(defaults: defaults)
+    }
+
+    func setMeter(_ provider: HistoryProvider, enabled: Bool) {
+        if enabled { meterProviders.insert(provider) } else { meterProviders.remove(provider) }
+        defaults.set(HistoryProvider.allCases.filter(meterProviders.contains).map(\.rawValue), forKey: "menuBarMeters")
+    }
+
+    static func sampleMenuBar(_ summary: UsageSummary) -> AppModel {
+        let model = AppModel(sampleSetup: true)
+        model.source = .demo
+        model.showsSetup = false
+        model.settingsPage = .menuBar
+        model.meterProviders = Set(HistoryProvider.allCases)
+        model.readings[UsageRanges.limits] = Reading(summary: summary, fetchedAt: summary.generatedAt,
+                                                      error: nil, server: SharedStore.demoURL)
+        return model
     }
 
     func prepareSetupIfNeeded() {
