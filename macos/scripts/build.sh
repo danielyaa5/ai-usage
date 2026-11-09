@@ -92,7 +92,7 @@ trap 'rm -rf "$WORK"' EXIT
 TEST_OPTIONS=()
 case "${1:-}" in
   --setup-test|--claude-fresh-test)
-    TEST_OPTIONS=("SWIFT_ACTIVE_COMPILATION_CONDITIONS=CLAUDE_QUOTA_TEST" "CURRENT_PROJECT_VERSION=13")
+    TEST_OPTIONS=("SWIFT_ACTIVE_COMPILATION_CONDITIONS=CLAUDE_QUOTA_TEST")
     CLAUDE_BIN=${CLAUDE_TEST_BINARY:-$(command -v claude || true)}
     [[ -n "$CLAUDE_BIN" && -x "$CLAUDE_BIN" ]] || { echo "Install Claude Code to build this private test." >&2; exit 1; }
     codesign --verify --strict -R '=anchor apple generic and identifier "com.anthropic.claude-code" and certificate leaf[subject.OU] = "Q6L2SF6YDW"' "$CLAUDE_BIN"

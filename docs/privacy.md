@@ -17,4 +17,8 @@ Choose **Disconnect history** in the tool’s connection to revoke the app’s s
 - **Dashboard.** Choosing Dashboard sends summary requests to the address you enter. The administrator of that dashboard controls its data and logs. No dashboard is needed for This Mac.
 - **Demo.** Demo uses fictional data. It does not require an account or a network connection.
 
+## Bug reports and feedback
+
+When you choose **Send report**, Cloudflare and Resend deliver your summary, description, optional reply address and any screenshots you selected to the private AI Usage support inbox. You can review or turn off diagnostics before sending. Diagnostics include the app and macOS versions, widget settings, and which sources are connected. They exclude conversations, usage figures, account identifiers, tokens, server addresses and file paths. Screenshots are re-encoded without their original filenames or image metadata. Their visible contents are included.
+
 For privacy and support questions, visit the [AI Usage support page](https://danielyakobian.com/ai-usage/).

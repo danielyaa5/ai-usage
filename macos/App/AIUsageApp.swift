@@ -25,6 +25,9 @@ struct AIUsageApp: App {
     var body: some Scene {
         Settings { SettingsView(model: delegate.model) }
         .commands {
+            CommandGroup(after: .help) {
+                Button("Contact support…") { SettingsWindow.showSupport(model: delegate.model) }
+            }
             CommandGroup(replacing: .appSettings) {
                 Button("Settings…") { SettingsWindow.show(model: delegate.model) }
                     .keyboardShortcut(",", modifiers: .command)
@@ -106,6 +109,11 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
 
     static func show(model: AppModel, page: SettingsPage? = nil) {
         controller.present(model: model, page: page)
+    }
+
+    static func showSupport(model: AppModel) {
+        show(model: model)
+        model.openSupport()
     }
 
     private func present(model: AppModel, page: SettingsPage?) {

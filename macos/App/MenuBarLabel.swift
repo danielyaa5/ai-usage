@@ -31,7 +31,7 @@ struct MenuBarLabel: View {
     }
 }
 
-/// The mark and every meter share one clickable menu-bar button.
+/// The same clickable button shows either the app mark or the enabled meters.
 struct MenuBarSymbol: View {
     let meters: [MenuBarMeter]
     let sample: Bool
@@ -52,18 +52,19 @@ struct MenuBarSymbol: View {
         let forest = NSColor(srgbRed: 36/255, green: 49/255, blue: 32/255, alpha: 1)
         let ink = dark ? sage : forest
         let trackColor = dark ? forest : sage
-        let mark = NSImage(named: dark ? "MenuMarkDark" : "MenuMarkLight")
-        let markWidth = mark?.size.width ?? 23
+        if meters.isEmpty {
+            let mark = NSImage(named: dark ? "MenuMarkDark" : "MenuMarkLight")
+            return mark ?? NSImage(systemSymbolName: "gauge.medium", accessibilityDescription: "AI Usage")!
+        }
         let attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 9.5, weight: .semibold), .foregroundColor: ink
         ]
         let widths = meters.map { max(18, ceil(($0.shortName as NSString).size(withAttributes: attrs).width)) }
-        let width = widths.reduce(markWidth) { $0 + 4 + $1 }
+        let spacing: CGFloat = 4
+        let width = widths.reduce(0, +) + spacing * CGFloat(widths.count - 1)
         let result = NSImage(size: NSSize(width: width, height: 18), flipped: false) { _ in
-            mark?.draw(in: NSRect(x: 0, y: 0, width: markWidth, height: 18))
-            var x = markWidth
+            var x: CGFloat = 0
             for (meter, span) in zip(meters, widths) {
-                x += 4
                 (meter.shortName as NSString).draw(at: CGPoint(x: x, y: 5), withAttributes: attrs)
                 if let percent = meter.percent {
                     trackColor.setFill()
@@ -80,7 +81,7 @@ struct MenuBarSymbol: View {
                         NSRect(x: x + dx, y: 2.5, width: min(2, span - dx), height: 1.5).fill()
                     }
                 }
-                x += span
+                x += span + spacing
             }
             return true
         }
@@ -97,7 +98,7 @@ struct MenuBarSettings: View {
         Toggle("Show AI Usage in the menu bar", isOn: $model.showMenuBarIcon)
         VStack(alignment: .leading, spacing: 12) {
             Text("Quota meters").font(.headline)
-            Text("Choose which meters appear beside the gauge. Each shows the lowest remaining limit for that provider. A dashed line means there’s no current reading.")
+            Text("Choose the meters to show in place of the AI icon. Each shows the lowest remaining limit for that provider. A dashed line means there’s no current reading.")
                 .font(.callout).foregroundStyle(.secondary)
             ForEach(HistoryProvider.allCases, id: \.self) { provider in
                 HStack {
@@ -117,7 +118,7 @@ struct MenuBarSettings: View {
                 Text(model.source == .demo ? "Menu bar preview · Sample data" : "Menu bar preview").font(.callout)
                 MenuBarLabel(model: model)
             }
-            Text("Click the gauge in your menu bar to see each limit and its reset time.").font(.callout).foregroundStyle(.secondary)
+            Text(model.meterProviders.isEmpty ? "Click the AI icon to see your limits and reset times." : "Click the meters to see your limits and reset times.").font(.callout).foregroundStyle(.secondary)
         }
     }
 }

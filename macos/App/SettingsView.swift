@@ -18,6 +18,10 @@ struct SettingsView: View {
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 0) {
                 if let journey { SetupRail(step: journey.step) } else { connectionsRail }
+                Button("Contact support…") { model.openSupport() }
+                    .buttonStyle(.link).font(.callout)
+                    .padding(.horizontal, 19).padding(.bottom, 8)
+                    .accessibilityIdentifier("contact-support")
                 Button("Privacy policy") { showsPrivacy = true }
                     .buttonStyle(.link).font(.callout)
                     .padding(.horizontal, 19).padding(.bottom, 14)
@@ -57,6 +61,9 @@ struct SettingsView: View {
         }
         .frame(minWidth: 690, idealWidth: Self.initialSize.width, maxWidth: .infinity,
                minHeight: 470, idealHeight: Self.initialSize.height, maxHeight: .infinity)
+        .sheet(isPresented: $model.showsSupport) {
+            SupportReportView(draft: model.supportDraft) { model.showsSupport = false }
+        }
         .sheet(isPresented: $showsPrivacy) { PrivacyPolicyView() }
     }
 

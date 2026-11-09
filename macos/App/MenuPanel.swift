@@ -28,6 +28,10 @@ struct MenuPanel: View {
                 .disabled(model.refreshing)
                 Spacer()
                 Button("Settings…") { SettingsWindow.show(model: model) }
+                Button {
+                    SettingsWindow.showSupport(model: model)
+                } label: { Image(systemName: "questionmark.circle") }
+                .help("Contact support").accessibilityLabel("Contact support")
                 Button("Quit") { NSApp.terminate(nil) }
             }
             .controlSize(.small)

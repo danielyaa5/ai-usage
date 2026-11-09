@@ -24,6 +24,14 @@ final class AppModel: ObservableObject {
     @Published var showMenuBarIcon: Bool {
         didSet { defaults.set(showMenuBarIcon, forKey: "showMenuBarIcon") }
     }
+    let supportDraft = SupportDraft()
+    @Published var showsSupport = false
+
+    func openSupport() {
+        supportDraft.prepareForDisplay(model: self)
+        showsSupport = true
+    }
+
     let local: LocalSources
 
     init(sampleSetup: Bool = false) {
