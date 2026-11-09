@@ -31,13 +31,14 @@ struct MenuBarLabel: View {
     }
 }
 
-/// A single template image keeps the panel and every meter in one native menu-bar button.
+/// The mark and every meter share one clickable menu-bar button.
 struct MenuBarSymbol: View {
     let meters: [MenuBarMeter]
     let sample: Bool
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        Image(nsImage: Self.image(meters: meters)).renderingMode(.template)
+        Image(nsImage: Self.image(meters: meters, dark: colorScheme == .dark)).renderingMode(.original)
             .accessibilityLabel(Text(description)).help(description)
     }
 
@@ -46,29 +47,35 @@ struct MenuBarSymbol: View {
         return ([sample ? "AI Usage, sample data" : "AI Usage"] + parts).joined(separator: ". ")
     }
 
-    @MainActor static func image(meters: [MenuBarMeter]) -> NSImage {
+    @MainActor static func image(meters: [MenuBarMeter], dark: Bool) -> NSImage {
+        let sage = NSColor(srgbRed: 161/255, green: 173/255, blue: 141/255, alpha: 1)
+        let forest = NSColor(srgbRed: 36/255, green: 49/255, blue: 32/255, alpha: 1)
+        let ink = dark ? sage : forest
+        let trackColor = dark ? forest : sage
+        let mark = NSImage(named: dark ? "MenuMarkDark" : "MenuMarkLight")
+        let markWidth: CGFloat = 35
         let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 9.5, weight: .semibold), .foregroundColor: NSColor.black
+            .font: NSFont.systemFont(ofSize: 9.5, weight: .semibold), .foregroundColor: ink
         ]
         let widths = meters.map { max(18, ceil(($0.shortName as NSString).size(withAttributes: attrs).width)) }
-        let width = widths.reduce(CGFloat(18)) { $0 + 4 + $1 }
+        let width = widths.reduce(markWidth) { $0 + 4 + $1 }
         let result = NSImage(size: NSSize(width: width, height: 18), flipped: false) { _ in
-            drawGauge()
-            var x: CGFloat = 18
+            mark?.draw(in: NSRect(x: 0, y: 0, width: markWidth, height: 18))
+            var x = markWidth
             for (meter, span) in zip(meters, widths) {
                 x += 4
                 (meter.shortName as NSString).draw(at: CGPoint(x: x, y: 5), withAttributes: attrs)
                 if let percent = meter.percent {
-                    NSColor.black.withAlphaComponent(0.32).setFill()
+                    trackColor.setFill()
                     let track = NSRect(x: x, y: 2, width: span, height: 3)
                     NSBezierPath(roundedRect: track, xRadius: 1.5, yRadius: 1.5).fill()
                     if percent > 0 {
-                        NSColor.black.setFill()
+                        ink.setFill()
                         let fill = NSRect(x: x, y: 2, width: max(1, span * CGFloat(percent) / 100), height: 3)
                         NSBezierPath(roundedRect: fill, xRadius: 1.5, yRadius: 1.5).fill()
                     }
                 } else {
-                    NSColor.black.withAlphaComponent(0.55).setFill()
+                    ink.setFill()
                     for dx in stride(from: CGFloat(0), to: span, by: 5) {
                         NSRect(x: x + dx, y: 2.5, width: min(2, span - dx), height: 1.5).fill()
                     }
@@ -77,29 +84,9 @@ struct MenuBarSymbol: View {
             }
             return true
         }
-        result.isTemplate = true
         return result
     }
 
-    private static func drawGauge() {
-        NSColor.black.set()
-        let arc = NSBezierPath()
-        arc.lineWidth = 1.8
-        arc.lineCapStyle = .round
-        arc.appendArc(withCenter: CGPoint(x: 9, y: 8.8), radius: 7.2, startAngle: 180, endAngle: 0, clockwise: true)
-        arc.stroke()
-        let needle = NSBezierPath()
-        needle.lineWidth = 1.8
-        needle.lineCapStyle = .round
-        needle.move(to: CGPoint(x: 9, y: 8.8))
-        needle.line(to: CGPoint(x: 12.8, y: 13.4))
-        needle.stroke()
-        NSBezierPath(ovalIn: NSRect(x: 7.5, y: 7.3, width: 3, height: 3)).fill()
-        for (i, h) in [2.5, 4.8, 3.6].enumerated() {
-            NSBezierPath(roundedRect: NSRect(x: 3.5 + CGFloat(i) * 4, y: 1.2, width: 3, height: h),
-                         xRadius: 0.6, yRadius: 0.6).fill()
-        }
-    }
 }
 
 struct MenuBarSettings: View {

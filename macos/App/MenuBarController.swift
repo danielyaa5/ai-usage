@@ -18,6 +18,8 @@ final class MenuBarController: NSObject {
     private let popover = NSPopover()
     private var subscriptions: Set<AnyCancellable> = []
     private var lastDescription: String?
+    private var lastDark: Bool?
+    private var appearanceObservation: NSKeyValueObservation?
 
     init(model: AppModel) {
         self.model = model
@@ -36,6 +38,7 @@ final class MenuBarController: NSObject {
         guard model.showMenuBarIcon else {
             if let item {
                 popover.performClose(nil)
+                appearanceObservation = nil
                 NSStatusBar.system.removeStatusItem(item)
                 self.item = nil
                 lastDescription = nil
@@ -48,12 +51,18 @@ final class MenuBarController: NSObject {
             newItem.button?.target = self
             newItem.button?.action = #selector(togglePanel)
             item = newItem
+            appearanceObservation = newItem.button?.observe(\.effectiveAppearance) { [weak self] _, _ in
+                Task { @MainActor in self?.update() }
+            }
         }
         let meters = model.menuBarMeters(at: Date())
         let description = MenuBarSymbol(meters: meters, sample: model.source == .demo).description
-        guard description != lastDescription, let button = item?.button else { return }
+        guard let button = item?.button else { return }
+        let dark = button.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        guard description != lastDescription || dark != lastDark else { return }
+        lastDark = dark
         lastDescription = description
-        button.image = MenuBarSymbol.image(meters: meters)
+        button.image = MenuBarSymbol.image(meters: meters, dark: dark)
         button.toolTip = description
         button.setAccessibilityLabel(description)
     }
