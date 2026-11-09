@@ -1,5 +1,5 @@
 #!/bin/bash
-# Install the signed build in /Applications, register its widgets and start it in the background.
+# Install the signed build in /Applications, register its widgets, and show setup on a new install.
 #
 #   macos/scripts/install.sh [path/to/AI Usage.app]
 #
@@ -16,16 +16,18 @@ LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchSe
 [ -d "$SOURCE" ] || { echo "No app at $SOURCE; run scripts/build.sh first." >&2; exit 1; }
 codesign --verify --deep --strict "$SOURCE"
 ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$SOURCE/Contents/Info.plist")
-if [[ "$ID" == *.freshinstall.AIUsage ]]; then
-  echo "Copy this test build to /Applications/AI Usage Fresh Install.app and open it for first-run setup." >&2
+if [[ "$ID" == *.freshinstall.AIUsage || "$ID" == *.setuptest.AIUsage ]]; then
+  echo "Copy $(basename "$SOURCE") to Applications and open it for first-run setup." >&2
   exit 1
 fi
+OPEN_ARGS=(-a "$TARGET")
 if [ -d "$TARGET" ]; then
   OLD=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$TARGET/Contents/Info.plist" 2>/dev/null || true)
   if [ "$OLD" != "$ID" ]; then
     echo "$TARGET is a different app ($OLD); not replacing it." >&2
     exit 1
   fi
+  OPEN_ARGS=(-g -a "$TARGET" --args --background)
 fi
 
 stop_installed_process() {
@@ -43,8 +45,8 @@ ditto "$STAGE/AI Usage.app" "$TARGET"
 rm -rf "$STAGE"
 touch "$TARGET"
 
-"$LSREGISTER" -f "$TARGET"
 "$LSREGISTER" -u "$SOURCE" 2>/dev/null || true
+"$LSREGISTER" -f "$TARGET"
 pluginkit -a "$TARGET/Contents/PlugIns/AIUsageWidgets.appex" || true
 # Give macOS a few seconds to take in the new build before it reads the network: once, after a read
 # within a second of the install, the app and its widgets were refused local network access for about
@@ -52,7 +54,7 @@ pluginkit -a "$TARGET/Contents/PlugIns/AIUsageWidgets.appex" || true
 sleep 5
 # A widget extension still running from the old build keeps drawing with it until it quits.
 stop_installed_process "$TARGET/Contents/PlugIns/AIUsageWidgets.appex/Contents/MacOS/AIUsageWidgets"
-open -g -a "$TARGET"
+open "${OPEN_ARGS[@]}"
 
 echo "Installed $TARGET"
 pluginkit -m -v -i "$ID.Widgets" || echo "The widget extension isn't registered yet; give it a few seconds."

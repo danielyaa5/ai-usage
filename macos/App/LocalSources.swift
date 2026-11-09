@@ -14,17 +14,28 @@ final class LocalSources: ObservableObject {
     @Published private(set) var selected: Set<HistoryProvider> = []
     @Published private(set) var chatConnected = false
     @Published private(set) var accountBusy = false
+    @Published private(set) var chatQuotaIssue: String?
+    @Published private var codexHistoryObservedAt: Date?
     @Published private(set) var statusLineEnabled = false
     @Published private(set) var statusLineReady = false
+    @Published private(set) var claudeRequestCopied = false
+    @Published private(set) var claudeSetupError: String?
     @Published private(set) var googleQuotaConnected = false
-    private static let googleQuotaHelp = "Read remaining percentages and reset times. Connect opens Antigravity if needed."
+    @Published private(set) var googleQuotaObservedAt: Date?
+    private static let googleQuotaHelp = "See the quota Google reports for Gemini and other model groups. Sign in to the Antigravity desktop app on this Mac and keep it running. Connect opens it and asks for folder access if needed."
     @Published private(set) var googleQuotaStatus = LocalSources.googleQuotaHelp
     @Published private(set) var messages: [HistoryProvider: String] = [:]
     @Published var notice: String?
     var changed: (() -> Void)?
     private var active = false
     private var revision = 0
-    private var windows: [HistoryProvider: [LimitWindow]] = [:]
+    @Published private var windows: [HistoryProvider: [LimitWindow]] = [:]
+
+    func lastQuotaReading(_ provider: HistoryProvider) -> Date? {
+        if provider == .antigravity { return googleQuotaObservedAt }
+        if provider == .codex && !chatConnected { return codexHistoryObservedAt }
+        return windows[provider]?.compactMap(\.observedAt).max()
+    }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -63,6 +74,7 @@ final class LocalSources: ObservableObject {
         panel.showsHiddenFiles = true
         if let home = getpwuid(getuid())?.pointee.pw_dir {
             panel.directoryURL = URL(fileURLWithPath: String(cString: home), isDirectory: true)
+                .appendingPathComponent(provider.folder, isDirectory: true)
         }
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
@@ -74,6 +86,7 @@ final class LocalSources: ObservableObject {
             let bookmark = try url.bookmarkData(options:[.withSecurityScope,.securityScopeAllowOnlyReadAccess], includingResourceValuesForKeys:nil, relativeTo:nil)
             defaults.set(bookmark, forKey:bookmarkKey(provider))
             selected.insert(provider)
+            if provider == .codex { codexHistoryObservedAt = nil }
             messages[provider] = "Reading history…"
             invalidateHistory()
         } catch { notice = "Could not save read-only access. Choose the folder again." }
@@ -81,6 +94,7 @@ final class LocalSources: ObservableObject {
     func forget(_ provider: HistoryProvider) {
         defaults.removeObject(forKey: bookmarkKey(provider))
         selected.remove(provider)
+        if provider == .codex { codexHistoryObservedAt = nil }
         messages[provider] = nil
         invalidateHistory()
     }
@@ -149,6 +163,7 @@ final class LocalSources: ObservableObject {
         cancelGoogleQuotaCheck()
         defaults.removeObject(forKey: "googleQuotaFolder")
         googleQuotaConnected = false
+        googleQuotaObservedAt = nil
         googleQuotaStatus = Self.googleQuotaHelp
         invalidateHistory()
     }
@@ -190,6 +205,7 @@ final class LocalSources: ObservableObject {
                 if chatConnected { try await account.disconnect(); chatConnected = false }
                 else { try await account.connect(); chatConnected = true }
                 defaults.set(chatConnected, forKey:"chatConnected")
+                chatQuotaIssue = nil
                 keep(nil, for:.codex)
                 invalidateHistory()
             } catch {
@@ -200,9 +216,17 @@ final class LocalSources: ObservableObject {
 
     func toggleStatusLine(_ enabled: Bool) {
         statusLineEnabled = enabled
+        claudeSetupError = nil
         defaults.set(enabled, forKey:"claudeStatusLine")
         if enabled { startListener() }
-        else { stopListener(); keep(nil,for:.claude); defaults.removeObject(forKey:"statusToken"); revision += 1; changed?() }
+        else {
+            stopListener()
+            claudeRequestCopied = false
+            keep(nil, for: .claude)
+            defaults.removeObject(forKey: "statusToken")
+            revision += 1
+            changed?()
+        }
     }
     private func stopListener() {
         listenerGeneration += 1
@@ -234,25 +258,28 @@ final class LocalSources: ObservableObject {
             Task {
                 let bound = await server.start { _ in }
                 guard generation == listenerGeneration else { return }
-                guard let bound else { stopListener(); notice = "The local status-line port is unavailable. Close the other listener and try again."; return }
+                guard let bound else {
+                    stopListener()
+                    claudeSetupError = "AI Usage couldn’t start the connection. Close any other copy of this app and try again."
+                    return
+                }
                 defaults.set(Int(bound),forKey:"statusPort")
                 statusLineReady = true
+                claudeSetupError = nil
                 changed?()
             }
-        } catch { notice = "Could not start the local status-line receiver." }
+        } catch { claudeSetupError = "AI Usage couldn’t start the connection. Try again." }
     }
     private func receive(_ values: [LimitWindow], generation: Int) {
         guard active, statusLineEnabled, listenerGeneration == generation else { return }
         keep(values, for:.claude); changed?()
     }
-    func copyStatusLine(previousCommand: String) {
-        guard statusLineReady, let token = defaults.string(forKey:"statusToken") else { return }
-        let command = StatusLineSnippet.command(port:defaults.integer(forKey:"statusPort"),token:token,userCommand:previousCommand)
-        guard !command.isEmpty, let data = try? JSONSerialization.data(withJSONObject:["statusLine":["type":"command","command":command]],
-                        options:[.prettyPrinted,.sortedKeys,.withoutEscapingSlashes]), let json = String(data:data,encoding:.utf8) else { return }
+    func copyClaudeSetupRequest() {
+        guard let executable = Bundle.main.executableURL else { notice = "Reopen AI Usage from Applications and try again."; return }
+        toggleStatusLine(true)
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(json, forType:.string)
-        notice = "Copied the statusLine setting. Merge that one setting into your Claude Code settings, then send a message in Claude Code."
+        claudeRequestCopied = NSPasteboard.general.setString(ClaudeStatusReading.setupRequest(executable: executable), forType: .string)
+        if !claudeRequestCopied { notice = "Couldn’t copy the setup request. Try again." }
     }
 
     func collect(now: Date) async -> SharedStore.LocalSnapshot? {
@@ -273,20 +300,32 @@ final class LocalSources: ObservableObject {
                 histories[provider] = reading
                 status[provider] = reading.events.isEmpty ? "Connected · no usage in the last 30 days" :
                     "Connected · \(reading.events.count.formatted()) recorded requests"
-            } catch { issues[provider] = "History could not be read. Choose the folder again." }
+            } catch {
+                let message = "History could not be read. Choose the folder again."
+                issues[provider] = message
+                status[provider] = message
+            }
             guard active && run == revision else { return nil }
         }
         if chatConnected && !accountBusy {
-            do { let latest = try await account.limits(); guard active && run == revision else { return nil }; keep(latest,for:.codex) }
-            catch { issues[.codex] = "Could not refresh ChatGPT limits. Check your connection or reconnect." }
+            do {
+                let latest = try await account.limits()
+                guard active && run == revision else { return nil }
+                keep(latest, for: .codex)
+                chatQuotaIssue = nil
+            } catch {
+                guard active && run == revision else { return nil }
+                let message = "Couldn’t refresh ChatGPT limits. Check your connection and try Refresh now."
+                issues[.codex] = message
+                chatQuotaIssue = message
+            }
         }
         guard active && run == revision else { return nil }
         var connectedLimits: [HistoryProvider:[LimitWindow]] = [:]
         if chatConnected { connectedLimits[.codex] = windows[.codex] ?? [] }
         if statusLineEnabled { connectedLimits[.claude] = windows[.claude] ?? [] }
-        if messages != status.merging(issues, uniquingKeysWith: { _, warning in warning }) {
-            messages = status.merging(issues, uniquingKeysWith: { _, warning in warning })
-        }
+        codexHistoryObservedAt = histories[.codex]?.windows.compactMap(\.observedAt).max()
+        if messages != status { messages = status }
         if googleQuotaConnected {
             cancelGoogleQuotaCheck()
             let check = Task { try await readGoogleQuota() }
@@ -295,11 +334,13 @@ final class LocalSources: ObservableObject {
                 let windows = try await check.value
                 guard active && run == revision else { return nil }
                 connectedLimits[.antigravity] = windows
+                googleQuotaObservedAt = windows.compactMap(\.observedAt).max()
                 googleQuotaStatus = "Connected · \(windows.count) quota windows"
             } catch {
                 guard active && run == revision else { return nil }
                 let reason = (error as? AntigravityQuotaError)?.rawValue ?? AntigravityQuotaError.permission.rawValue
                 connectedLimits[.antigravity] = []
+                googleQuotaObservedAt = nil
                 googleQuotaStatus = reason
                 issues[.antigravity] = reason
             }

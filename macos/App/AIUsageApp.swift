@@ -9,6 +9,17 @@ import AIUsageKit
 /// show has changed. Widget extensions only run when macOS asks them for a timeline, so the polling
 /// lives here.
 @main
+enum AIUsageEntryPoint {
+    @MainActor static func main() {
+        let args = CommandLine.arguments.dropFirst()
+        if args.first == ClaudeStatusReading.flag {
+            ClaudeStatusReporter.run(passThrough: args.dropFirst().first == "--pass-through")
+        } else {
+            AIUsageApp.main()
+        }
+    }
+}
+
 struct AIUsageApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @AppStorage("showMenuBarIcon") private var showIcon = true
@@ -39,8 +50,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         RefreshUsageIntent.inApp = { [weak self] in self?.model.refresh() }
         model.start()
-        if !UserDefaults.standard.bool(forKey: "setupShown") && SharedStore.loadConfig().source == .local {
-            UserDefaults.standard.set(true, forKey: "setupShown")
+        // Finder and Spotlight send an open-application event. Login items, services and widget
+        // links have their own launch behavior and must not raise an extra settings window.
+        guard !CommandLine.arguments.contains("--background"),
+              let event = NSAppleEventManager.shared().currentAppleEvent,
+              event.eventID == kAEOpenApplication else { return }
+        let reason = event.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue
+        if reason != keyAELaunchedAsLogInItem && reason != keyAELaunchedAsServiceItem {
             SettingsWindow.show(model: model)
         }
     }
@@ -50,7 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for url in urls where url.scheme == AppLink.scheme {
             if url.host == "refresh" {
                 model.refresh()
-                SettingsWindow.show(model: model, tab: "Widgets")
+                SettingsWindow.show(model: model, page: .widgets)
             } else if url.host == "settings" {
                 SettingsWindow.show(model: model)
             } else {
@@ -65,6 +81,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         SettingsWindow.show(model: model)
         return false
     }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 }
 
 /// Login launch is an explicit user preference.
@@ -76,35 +94,46 @@ enum LoginItem {
     }
 }
 
-/// Settings in an AppKit window: the app has no Dock icon and no SwiftUI window scenes, and a widget
-/// click or a second launch must be able to open it.
+/// The settings window gives the menu bar app a Dock and Command-Tab entry while it is open.
 @MainActor
 final class SettingsWindow: NSObject, NSWindowDelegate {
     private static let controller = SettingsWindow()
     private var window: NSWindow?
 
-    static func show(model: AppModel, tab: String = "Sources") {
-        controller.present(model: model, tab: tab)
+    static func show(model: AppModel, page: SettingsPage? = nil) {
+        controller.present(model: model, page: page)
     }
 
-    private func present(model: AppModel, tab: String) {
-        model.settingsTab = tab
+    private func present(model: AppModel, page: SettingsPage?) {
+        if let page {
+            model.showsSetup = false
+            model.settingsPage = page
+        } else if window == nil {
+            model.prepareSetupIfNeeded()
+            model.showsSetup = true
+            model.settingsPage = .connections
+        }
+        if NSApp.activationPolicy() != .regular { NSApp.setActivationPolicy(.regular) }
         if window == nil {
             let hosting = NSHostingController(rootView: SettingsView(model: model))
             let created = NSWindow(contentViewController: hosting)
             created.title = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "AI Usage"
-            created.styleMask = [.titled, .closable, .miniaturizable]
+            created.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+            created.setContentSize(SettingsView.initialSize)
+            created.contentMinSize = NSSize(width: 690, height: 470)
             created.isReleasedWhenClosed = false
             created.delegate = self
             created.center()
             window = created
         }
-        NSApp.activate()
+        if window?.isMiniaturized == true { window?.deminiaturize(nil) }
         window?.makeKeyAndOrderFront(nil)
+        NSApp.activate()
     }
 
     func windowWillClose(_ notification: Notification) {
         window?.contentViewController = nil
         window = nil
+        NSApp.setActivationPolicy(.accessory)
     }
 }

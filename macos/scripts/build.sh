@@ -67,8 +67,14 @@ case "${1:-}" in
     DISPLAY_NAME="AI Usage Fresh Install"
     URL_SCHEME=aiusage-fresh-install
     ;;
+  --setup-test)
+    OUT="$OUT/SetupTest"
+    PREFIX="$PREFIX.setuptest"
+    DISPLAY_NAME="AI Usage Setup Test"
+    URL_SCHEME=aiusage-setup-test
+    ;;
   "") ;;
-  *) echo "Usage: $0 [--fresh-install]" >&2; exit 1 ;;
+  *) echo "Usage: $0 [--fresh-install | --setup-test]" >&2; exit 1 ;;
 esac
 DERIVED="$OUT/DerivedData"
 APP="$OUT/$DISPLAY_NAME.app"

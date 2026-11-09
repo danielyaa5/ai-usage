@@ -3,6 +3,8 @@ import Foundation
 import WidgetKit
 import AIUsageKit
 
+enum SettingsPage { case connections, widgets, advanced }
+
 /// Reads the dashboard on a timer, keeps the shared reading the widgets fall back on, and asks macOS to
 /// redraw the widgets when what they show has changed.
 @MainActor
@@ -13,14 +15,53 @@ final class AppModel: ObservableObject {
     @Published private(set) var server: URL
 
     @Published private(set) var source: SharedStore.Source
-    @Published var settingsTab = "Sources"
+    @Published var settingsPage = SettingsPage.connections
+    @Published var settingsProvider = HistoryProvider.claude
+    @Published private(set) var setup: SetupJourney?
+    @Published var showsSetup = true
+    private let defaults: UserDefaults
     let local: LocalSources
 
     init(sampleSetup: Bool = false) {
         let config = sampleSetup ? SharedStore.Config() : SharedStore.loadConfig()
+        let defaults = sampleSetup ? UserDefaults(suiteName: "store-preview-" + UUID().uuidString)! : .standard
+        self.defaults = defaults
+        setup = SetupJourney.restore(defaults.data(forKey: "setupJourney"))
         source = config.source
         server = config.server ?? UsageClient.defaultServer
-        local = LocalSources(defaults: sampleSetup ? UserDefaults(suiteName: "store-preview-" + UUID().uuidString)! : .standard)
+        local = LocalSources(defaults: defaults)
+    }
+
+    func prepareSetupIfNeeded() {
+        guard source == .local, setup == nil, !defaults.bool(forKey: "setupShown") else { return }
+        beginSetup()
+    }
+
+    func beginSetup() {
+        if source != .local { setSource(.local) }
+        guard source == .local else { return }
+        showsSetup = true
+        saveSetup(SetupJourney())
+    }
+
+    func editSetup(_ edit: (inout SetupJourney) -> Void) {
+        guard var progress = setup else { return }
+        edit(&progress)
+        saveSetup(progress)
+    }
+
+    func finishSetup(page: SettingsPage = .connections) {
+        if let tool = setup?.tools.first { settingsProvider = tool }
+        showsSetup = false
+        saveSetup(nil)
+        settingsPage = page
+    }
+
+    private func saveSetup(_ progress: SetupJourney?) {
+        defaults.set(true, forKey: "setupShown")
+        if let progress, let data = try? JSONEncoder().encode(progress) { defaults.set(data, forKey: "setupJourney") }
+        else { defaults.removeObject(forKey: "setupJourney") }
+        setup = progress
     }
     private var refreshAgain = false
 
@@ -171,6 +212,6 @@ final class AppModel: ObservableObject {
 
     func openDashboard() {
         if source == .dashboard, let address = SharedStore.loadConfig().server { NSWorkspace.shared.open(address) }
-        else { SettingsWindow.show(model: self, tab: "Widgets") }
+        else { SettingsWindow.show(model: self, page: .widgets) }
     }
 }

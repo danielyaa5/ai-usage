@@ -3,14 +3,9 @@ import WidgetKit
 import AIUsageKit
 
 struct SettingsView: View {
+    static let initialSize = NSSize(width: 780, height: 548)
     @ObservedObject var model: AppModel
     @ObservedObject private var local: LocalSources
-    private var tab: String { model.settingsTab }
-    @State private var address = ""
-    @State private var previousCommand = ""
-    @State private var statusOptions = false
-    @State private var openAtLogin = LoginItem.isEnabled
-    @AppStorage("showMenuBarIcon") private var showIcon = true
 
     init(model: AppModel) {
         self.model = model
@@ -18,168 +13,191 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("AI Usage").font(.title.bold())
-                    Text(tab == "Sources" ? "Choose where your readings come from." : "Plan limits and recent usage on your desktop.")
-                        .font(.callout).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Picker("View", selection: $model.settingsTab) {
-                    Text("Sources").tag("Sources")
-                    Text("Widgets").tag("Widgets")
-                }.labelsHidden().pickerStyle(.segmented).fixedSize()
-            }.padding(20)
+        let journey = model.showsSetup ? model.setup : nil
+        HStack(spacing: 0) {
+            Group {
+                if let journey { SetupRail(step: journey.step) } else { connectionsRail }
+            }
+            .frame(width: 192).frame(maxHeight: .infinity, alignment: .top)
+            .background(Color(nsColor: .underPageBackgroundColor))
             Divider()
-            Form {
-                if tab == "Sources" {
-                    Picker("Source", selection: Binding(get: { model.source }, set: model.setSource)) {
-                        Text("This Mac").tag(SharedStore.Source.local)
-                        Text("Dashboard").tag(SharedStore.Source.dashboard)
-                        Text("Demo").tag(SharedStore.Source.demo)
-                    }.pickerStyle(.segmented)
-                    switch model.source {
-                    case .local: localSetup
-                    case .dashboard: dashboardSetup
-                    case .demo:
-                        Section("Sample data") {
-                            Text("The app and widgets now show fictional readings. Switch to This Mac to see your own usage.")
-                            Button("Preview widgets") { model.settingsTab = "Widgets" }
+            VStack(alignment: .leading, spacing: 0) {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 22) {
+                        if let journey { GuidedContent(model: model, local: local, journey: journey) }
+                        else {
+                            switch model.settingsPage {
+                            case .connections: connections
+                            case .widgets: WidgetSettings(model: model)
+                            case .advanced: AdvancedSettings(model: model, local: local)
+                            }
+                        }
+                        if let notice = local.notice {
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(notice).font(.callout).textSelection(.enabled)
+                                Spacer()
+                                Button("Dismiss") { local.notice = nil }.buttonStyle(.link)
+                            }
                         }
                     }
-                } else {
-                    widgetPreview
-                    Section("Preferences") {
-                        Toggle("Open at login", isOn: Binding(get: { openAtLogin }, set: { enabled in
-                            do { try LoginItem.set(enabled); openAtLogin = LoginItem.isEnabled }
-                            catch { local.notice = "Could not change Open at login. Check Login Items in System Settings." }
-                        }))
-                        Toggle("Show icon in menu bar", isOn: $showIcon)
-                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(28)
                 }
-                if let notice = local.notice {
-                    Section {
-                        Text(notice).textSelection(.enabled)
-                        Button("Dismiss") { local.notice = nil }
-                    }
+                .id(journey.map { "setup-\($0.step.rawValue)-\($0.index)" } ?? "\(model.settingsPage)-\(model.settingsProvider.rawValue)")
+                Divider()
+                if let journey { SetupFooter(model: model, local: local, journey: journey) }
+                else { refreshFooter }
+            }.frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(nsColor: .windowBackgroundColor))
+        }
+        .frame(minWidth: 690, idealWidth: Self.initialSize.width, maxWidth: .infinity,
+               minHeight: 470, idealHeight: Self.initialSize.height, maxHeight: .infinity)
+    }
+
+    private var connectionsRail: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Connections").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                .padding(.leading, 10).padding(.bottom, 5).accessibilityAddTraits(.isHeader)
+            ForEach(HistoryProvider.allCases, id: \.self) { provider in
+                let selected = model.settingsPage == .connections && model.settingsProvider == provider
+                Button {
+                    model.settingsProvider = provider
+                    model.settingsPage = .connections
+                } label: {
+                    HStack(alignment: .top, spacing: 9) {
+                        Circle().fill(local.connectionColor(provider)).frame(width: 9, height: 9).padding(.top, 4)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(provider.displayName).fontWeight(.medium)
+                            Text(local.connectionLabel(provider)).font(.caption)
+                                .foregroundStyle(selected ? Color.white.opacity(0.88) : Color.secondary)
+                        }
+                        Spacer(minLength: 0)
+                    }.padding(.vertical, 8).padding(.horizontal, 10).contentShape(Rectangle())
                 }
-            }.formStyle(.grouped)
+                .buttonStyle(.plain).foregroundStyle(selected ? Color.white : Color.primary)
+                .background(RoundedRectangle(cornerRadius: 7).fill(selected ? Color.accentColor : .clear))
+                .accessibilityAddTraits(selected ? .isSelected : []).accessibilityIdentifier("nav-" + provider.rawValue)
+            }
+            Divider().padding(.vertical, 9)
+            navigation("Widgets", "square.grid.2x2", .widgets)
+            navigation("Advanced", "gearshape", .advanced)
+            Spacer()
+            Button {
+                model.beginSetup()
+            } label: {
+                Label(model.source == .local ? "Guided setup" : "Set up this Mac", systemImage: "list.number").padding(8)
+            }
+            .buttonStyle(.plain).accessibilityIdentifier("run-guided-setup")
+            .help("Choose tools and connect them on this Mac")
+        }.padding(.horizontal, 9).padding(.vertical, 21)
+    }
+
+    private func navigation(_ title: String, _ icon: String, _ page: SettingsPage) -> some View {
+        let selected = model.settingsPage == page
+        return Button { model.settingsPage = page } label: {
+            HStack(spacing: 9) { Image(systemName: icon); Text(title); Spacer() }
+                .padding(.vertical, 8).padding(.horizontal, 10).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).foregroundStyle(selected ? Color.white : Color.primary)
+        .background(RoundedRectangle(cornerRadius: 7).fill(selected ? Color.accentColor : .clear))
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    @ViewBuilder private var connections: some View {
+        let provider = model.settingsProvider
+        ProviderHeader(provider: provider, title: provider.displayName)
+        Divider()
+        if model.source != .local {
+            Text(model.source == .demo ? "Your widgets are showing sample data." : "Your widgets are reading your dashboard.")
+                .foregroundStyle(.secondary)
+            Button("Use This Mac") { model.setSource(.local) }.buttonStyle(.borderedProminent)
+        } else {
+            HistoryConnection(provider: provider, local: local)
             Divider()
-            HStack {
-                if model.refreshing { ProgressView().controlSize(.small); Text("Reading usage…") }
-                else if let date = model.lastAttempt { Text("Last checked \(date.formatted(date:.omitted,time:.shortened))") }
-                Spacer()
-                Button("Refresh now") { model.refresh() }.disabled(model.refreshing)
-            }.font(.caption).foregroundStyle(.secondary).padding(.horizontal,20).padding(.vertical,10)
-        }
-        .frame(width: 580, height: 600)
-        .onAppear { address = SharedStore.loadConfig().server?.absoluteString ?? "" }
-    }
-
-    @ViewBuilder private var localSetup: some View {
-        Section {
-            ForEach(HistoryProvider.allCases, id:\.self) { provider in
-                HStack {
-                    VStack(alignment:.leading, spacing:3) {
-                        Text(provider == .antigravity ? "Google Antigravity" : provider.title).fontWeight(.medium)
-                        Text(local.messages[provider] ?? (local.selected.contains(provider) ? "Connected" : provider.folder + " folder"))
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Button(local.selected.contains(provider) ? "Choose again…" : "Connect…") { local.pick(provider) }
-                        .help("Choose the \(provider.folder) folder in your home folder.")
-                        .accessibilityIdentifier("history-" + provider.rawValue)
-                    if local.selected.contains(provider) {
-                        Button { local.forget(provider) } label: { Image(systemName:"xmark.circle") }
-                            .help("Disconnect " + provider.title).accessibilityLabel("Disconnect " + provider.title)
-                    }
-                }
-            }
-        } header: { Text("Usage on this Mac") }
-        footer: { Text("Choose a tool’s folder in your home folder to count its saved requests and tokens. The picker shows hidden folders. Access is read-only, and history stays on this Mac.") }
-
-        Section {
-            HStack {
-                VStack(alignment:.leading,spacing:3) {
-                    Text("ChatGPT limits").fontWeight(.medium)
-                    Text(local.chatConnected ? "Connected to OpenAI" : "Sign in to see the limits on your plan.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
-                if local.accountBusy {
-                    ProgressView().controlSize(.small)
-                    if !local.chatConnected { Button("Cancel") { local.cancelLogin() } }
-                } else {
-                    Button(local.chatConnected ? "Sign out" : "Sign in with ChatGPT…") { local.toggleAccount() }
-                }
-            }
-            HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Claude Code limits").fontWeight(.medium)
-                    Text(local.statusLineEnabled ? "Status-line receiver enabled" : "Use the limits Claude Code provides after a reply.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button(local.statusLineEnabled ? (statusOptions ? "Hide" : "Manage…") : "Set up…") {
-                    if !local.statusLineEnabled { local.toggleStatusLine(true) }
-                    statusOptions.toggle()
-                }.accessibilityIdentifier("claude-limits-setup")
-            }
-            if statusOptions && local.statusLineEnabled {
-                Text("Merge the copied statusLine setting into your Claude Code settings.json. If you already use a status line, paste its command below first. Then send a message in Claude Code.")
-                    .font(.caption).foregroundStyle(.secondary)
-                TextField("Existing status-line command (optional)", text: $previousCommand)
-                HStack {
-                    Button("Copy statusLine setting") { local.copyStatusLine(previousCommand: previousCommand) }
-                        .disabled(!local.statusLineReady)
-                    Spacer()
-                    Button("Turn off receiver") {
-                        local.toggleStatusLine(false)
-                        statusOptions = false
-                    }
-                }
-            }
-            HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Google Antigravity quota").fontWeight(.medium)
-                    Text(local.googleQuotaStatus)
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button(local.googleQuotaConnected ? "Disconnect" : "Connect Google quota") {
-                    if local.googleQuotaConnected { local.disconnectGoogleQuota() }
-                    else { local.connectGoogleQuota() }
-                }
-                    .accessibilityIdentifier("google-quota-setup")
-            }
-        } header: { Text("Account limits") }
-        footer: { Text("Codex history can also contain a recent limit reading.") }
-        Button("View my widgets") { model.settingsTab = "Widgets" }
-    }
-
-    @ViewBuilder private var dashboardSetup: some View {
-        Section("Your dashboard") {
-            TextField("Address", text:$address, prompt:Text("my-mac.local:8796")).onSubmit(saveAddress)
-            Button("Save and read") { saveAddress() }
-            Button("Use Google quota on this Mac") {
-                if !local.googleQuotaConnected { local.notice = local.connectGoogleQuota() }
-                if local.googleQuotaConnected { model.setSource(.local) }
-            }
-            if let issue = model.limits?.error { Text(issue).foregroundStyle(.secondary) }
-        }
-        Text("Use this option if you already run an AI Usage dashboard. This Mac works independently.")
-            .font(.callout).foregroundStyle(.secondary)
-    }
-    private func saveAddress() { local.notice = model.setServer(address) }
-
-    @ViewBuilder private var widgetPreview: some View {
-        Section(model.source == .demo ? "Demo · sample data" : "Current widget readings") {
-            WidgetCard(family:.systemMedium) { LimitsWidgetView(entry:model.entry(),family:.systemMedium) }
-            WidgetCard(family:.systemMedium) { UsageWidgetView(entry:model.entry(),family:.systemMedium) }
-        }
-        Section("Add to your desktop") {
-            Text("Control-click the desktop, choose Edit Widgets and search for AI Usage. AI usage totals combines your connected tools. To see one plan’s seven-day totals, add a medium or larger AI plan limits widget, Control-click it and choose the plan.")
+            QuotaConnection(provider: provider, local: local)
         }
     }
+
+    private var refreshFooter: some View {
+        HStack {
+            if model.refreshing { ProgressView().controlSize(.small); Text("Reading usage…") }
+            else if let date = model.lastAttempt { Text("Last checked \(date.formatted(date: .omitted, time: .shortened))") }
+            Spacer()
+            Button("Refresh now") { model.refresh() }.disabled(model.refreshing)
+        }.font(.caption).foregroundStyle(.secondary).padding(.horizontal, 22).padding(.vertical, 10)
+    }
+}
+
+struct WidgetSettings: View {
+    @ObservedObject var model: AppModel
+    var guided = false
+    @State private var totals = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(guided ? "Add your widget" : "Widgets").font(.system(size: 27, weight: .bold)).accessibilityAddTraits(.isHeader)
+            Picker("Widget preview", selection: $totals) {
+                Text("Plan limits").tag(false)
+                Text("Usage totals").tag(true)
+            }.labelsHidden().pickerStyle(.segmented).fixedSize()
+            Text(model.source == .demo ? "Preview · Sample data" : "Preview · Current readings").font(.caption).foregroundStyle(.secondary)
+            WidgetCard(family: .systemMedium) {
+                if totals { UsageWidgetView(entry: model.entry(), family: .systemMedium) }
+                else { LimitsWidgetView(entry: model.entry(), family: .systemMedium) }
+            }
+            let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "AI Usage"
+            Text("Control-click your desktop, choose Edit Widgets and search for \(name). Add \(totals ? "AI usage totals" : "AI plan limits").")
+                .fixedSize(horizontal: false, vertical: true)
+            Text(totals ? "Control-click the placed widget to choose its time period." :
+                    "For one provider’s limits and seven-day usage, add a medium or larger widget and choose its plan in Edit Widget.")
+                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+private struct AdvancedSettings: View {
+    @ObservedObject var model: AppModel
+    @ObservedObject var local: LocalSources
+    @State private var address = ""
+    @State private var openAtLogin = LoginItem.isEnabled
+    @AppStorage("showMenuBarIcon") private var showIcon = true
+
+    var body: some View {
+        Text("Advanced").font(.system(size: 27, weight: .bold)).accessibilityAddTraits(.isHeader)
+            .onAppear { address = SharedStore.loadConfig().server?.absoluteString ?? "" }
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Widget data").font(.headline)
+            Picker("Source", selection: Binding(get: { model.source }, set: model.setSource)) {
+                Text("This Mac").tag(SharedStore.Source.local)
+                Text("Dashboard").tag(SharedStore.Source.dashboard)
+                Text("Demo").tag(SharedStore.Source.demo)
+            }.labelsHidden().pickerStyle(.segmented)
+            switch model.source {
+            case .dashboard:
+                TextField("Dashboard address", text: $address, prompt: Text("my-mac.local:8796"))
+                    .textFieldStyle(.roundedBorder).onSubmit(save)
+                Button("Save and read", action: save)
+                Button("Use Google quota on this Mac") {
+                    if !local.googleQuotaConnected { local.notice = local.connectGoogleQuota() }
+                    if local.googleQuotaConnected { model.setSource(.local); model.settingsProvider = .antigravity; model.settingsPage = .connections }
+                }
+                if let issue = model.limits?.error { Text(issue).font(.callout).foregroundStyle(.secondary) }
+            case .demo:
+                Text("The widgets show fictional readings.").foregroundStyle(.secondary)
+                Button("Preview sample widgets") { model.settingsPage = .widgets }
+            case .local:
+                Text("Your widgets use the tools you connect on this Mac.").foregroundStyle(.secondary)
+            }
+        }
+        Divider()
+        VStack(alignment: .leading, spacing: 11) {
+            Text("Preferences").font(.headline)
+            Toggle("Open at login", isOn: Binding(get: { openAtLogin }, set: { value in
+                do { try LoginItem.set(value); openAtLogin = LoginItem.isEnabled }
+                catch { local.notice = "Couldn’t change Open at login. Check Login Items in System Settings." }
+            }))
+            Toggle("Show icon in menu bar", isOn: $showIcon)
+        }
+    }
+    private func save() { local.notice = model.setServer(address) }
 }
