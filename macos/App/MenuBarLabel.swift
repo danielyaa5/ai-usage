@@ -59,29 +59,34 @@ struct MenuBarSymbol: View {
         let attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 9.5, weight: .semibold), .foregroundColor: ink
         ]
-        let widths = meters.map { max(18, ceil(($0.shortName as NSString).size(withAttributes: attrs).width)) }
+        let meterWidth: CGFloat = 40
         let spacing: CGFloat = 4
-        let width = widths.reduce(0, +) + spacing * CGFloat(widths.count - 1)
+        let width = meterWidth * CGFloat(meters.count) + spacing * CGFloat(meters.count - 1)
         let result = NSImage(size: NSSize(width: width, height: 18), flipped: false) { _ in
             var x: CGFloat = 0
-            for (meter, span) in zip(meters, widths) {
-                (meter.shortName as NSString).draw(at: CGPoint(x: x, y: 5), withAttributes: attrs)
+            for meter in meters {
+                let label = meter.shortName as NSString
+                let labelX = x + (meterWidth - label.size(withAttributes: attrs).width) / 2
+                label.draw(at: CGPoint(x: labelX, y: 5), withAttributes: attrs)
                 if let percent = meter.percent {
                     trackColor.setFill()
-                    let track = NSRect(x: x, y: 2, width: span, height: 3)
+                    let track = NSRect(x: x, y: 2, width: meterWidth, height: 3)
                     NSBezierPath(roundedRect: track, xRadius: 1.5, yRadius: 1.5).fill()
                     if percent > 0 {
                         ink.setFill()
-                        let fill = NSRect(x: x, y: 2, width: max(1, span * CGFloat(percent) / 100), height: 3)
+                        let fill = NSRect(x: x, y: 2, width: max(1, meterWidth * CGFloat(percent) / 100), height: 3)
                         NSBezierPath(roundedRect: fill, xRadius: 1.5, yRadius: 1.5).fill()
                     }
                 } else {
                     ink.setFill()
-                    for dx in stride(from: CGFloat(0), to: span, by: 5) {
-                        NSRect(x: x + dx, y: 2.5, width: min(2, span - dx), height: 1.5).fill()
+                    let dashCount = 7
+                    let dashWidth: CGFloat = 2
+                    let step = (meterWidth - dashWidth) / CGFloat(dashCount - 1)
+                    for index in 0..<dashCount {
+                        NSRect(x: x + CGFloat(index) * step, y: 2.5, width: dashWidth, height: 1.5).fill()
                     }
                 }
-                x += span + spacing
+                x += meterWidth + spacing
             }
             return true
         }
