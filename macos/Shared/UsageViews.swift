@@ -1072,6 +1072,7 @@ struct AllPlansMedium: View {
             layout(rowSpacing: 4, heading: true, line: true)
             layout(rowSpacing: 4, heading: false, line: true)
             layout(rowSpacing: 4, heading: false, line: false)
+            layout(rowSpacing: 2, heading: false, line: false)
         }
     }
 
@@ -1111,6 +1112,8 @@ struct AllPlansLarge: View {
                 layout(warningLines: 2, totals: .compact, captions: true)
             }
             layout(warningLines: 1, totals: .compact, captions: true)
+            layout(warningLines: 1, totals: .compact, captions: true, rowSpacing: 4)
+            layout(warningLines: 1, totals: .compact, captions: false)
             layout(warningLines: 1, totals: nil, captions: true)
             layout(warningLines: 1, totals: nil, captions: false)
         }
@@ -1118,14 +1121,14 @@ struct AllPlansLarge: View {
 
     private enum Totals { case full, compact }
 
-    private func layout(warningLines: Int, totals: Totals?, captions: Bool) -> some View {
+    private func layout(warningLines: Int, totals: Totals?, captions: Bool, rowSpacing: CGFloat? = nil) -> some View {
         let wide = family == .systemExtraLarge
         let width = measured?.width ?? PreviewSize.content(family).width
         return VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 9) {
                 WidgetHeader(entry: entry, title: "AI plan limits")
                 LimitsTable(plans: entry.plans, now: entry.date, width: width,
-                            roomy: captions, fullTitles: wide)
+                            roomy: captions, fullTitles: wide, rowSpacing: rowSpacing)
                 WarningLines(plans: entry.plans, width: width, lines: warningLines)
             }
             Spacer(minLength: 8)

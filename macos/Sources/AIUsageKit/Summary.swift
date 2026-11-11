@@ -122,7 +122,7 @@ public struct LimitWindow: Codable, Equatable, Sendable, Identifiable {
     /// Present only for percentages a person copied from their Claude Usage page.
     public var manuallyEntered: Bool?
 
-    public var id: String { "\(group ?? "")|\(label)" }
+    public var id: String { "\(groupShort ?? group ?? "")|\(label)" }
 
     public init(label: String, group: String? = nil, groupShort: String? = nil, leftPct: Double, level: String? = nil,
                 resetsAt: Date?, observedAt: Date?) {

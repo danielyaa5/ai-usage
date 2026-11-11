@@ -3,14 +3,16 @@ import Foundation
 public extension UsageSummary {
     /// Fictional numbers for widget placeholders, the widget gallery and screenshots.
     static func sample(now: Date = Date()) -> UsageSummary {
-        func window(_ label: String, _ left: Double, resetsIn: TimeInterval, group: String? = nil) -> LimitWindow {
-            LimitWindow(label: label, group: group.map { "\($0) Models" }, groupShort: group, leftPct: left,
+        func window(_ label: String, _ left: Double, resetsIn: TimeInterval, group: String? = nil, groupShort: String? = nil) -> LimitWindow {
+            LimitWindow(label: label, group: group ?? groupShort.map { "\($0) Models" }, groupShort: groupShort ?? group, leftPct: left,
                         resetsAt: now.addingTimeInterval(resetsIn), observedAt: now.addingTimeInterval(-180))
         }
         let plans = [
             Plan(plan: "Claude Max 20x", title: "Claude Max 20x", short: "Claude", vendor: "anthropic", monthlyUsd: 200,
                  cost: 508.2, proratedUsd: 41.7, requests: 4661, tokens: 1_400_000_000,
-                 windows: [window("5-hour", 72, resetsIn: 2 * 3600 + 900), window("Weekly", 58, resetsIn: 2 * 86400 + 3600)],
+                 windows: [window("5-hour", 72, resetsIn: 2 * 3600 + 900, group: "Claude Models", groupShort: "All models"),
+                           window("Weekly", 58, resetsIn: 2 * 86400 + 3600, group: "Claude Models", groupShort: "All models"),
+                           window("Weekly", 84, resetsIn: 2 * 86400 + 3600, group: "Claude Models", groupShort: "Fable")],
                  notes: ["Extra usage: off"]),
             Plan(plan: "ChatGPT Pro", title: "ChatGPT Pro", short: "ChatGPT", vendor: "openai", monthlyUsd: 200,
                  cost: 448.1, proratedUsd: 41.7, requests: 2632, tokens: 347_000_000,
