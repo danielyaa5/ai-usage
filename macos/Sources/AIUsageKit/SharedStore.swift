@@ -41,8 +41,14 @@ public enum SharedStore {
         public var error: String
     }
 
-    private struct Request: Codable {
-        var at: Date
+    private struct RefreshStatus: Codable {
+        var at: Date?
+        var requestedAt: Date?
+        var refreshingStartedAt: Date?
+
+        var resolvedRequestedAt: Date? {
+            requestedAt ?? at
+        }
     }
 
     /// Tests point this at a temporary folder.
@@ -103,6 +109,10 @@ public enum SharedStore {
             self.issue = issue
             self.hasSources = hasSources
         }
+    }
+
+    public static func readLocalSnapshot() -> LocalSnapshot? {
+        read(LocalSnapshot.self, "this-mac.json")
     }
 
     public static func publishLocal(_ snapshot: LocalSnapshot) throws {
@@ -178,11 +188,30 @@ public enum SharedStore {
     /// A widget's refresh button asks for a new reading: until one arrives, the widgets read the
     /// dashboard themselves instead of reusing the shared reading.
     public static func requestRefresh(at date: Date = Date()) {
-        write(Request(at: date), "refresh.json")
+        markRefreshing(at: date)
+    }
+
+    public static func markRefreshing(at date: Date = Date()) {
+        var status = read(RefreshStatus.self, "refresh.json") ?? RefreshStatus()
+        status.refreshingStartedAt = date
+        status.requestedAt = date
+        write(status, "refresh.json")
+    }
+
+    public static func clearRefreshing() {
+        guard var status = read(RefreshStatus.self, "refresh.json") else { return }
+        status.refreshingStartedAt = nil
+        write(status, "refresh.json")
+    }
+
+    public static func isRefreshing(now: Date = Date(), timeout: TimeInterval = 90) -> Bool {
+        guard let startedAt = read(RefreshStatus.self, "refresh.json")?.refreshingStartedAt else { return false }
+        let elapsed = now.timeIntervalSince(startedAt)
+        return elapsed > -5 && elapsed < timeout
     }
 
     public static var refreshRequested: Date? {
-        read(Request.self, "refresh.json")?.at
+        read(RefreshStatus.self, "refresh.json")?.resolvedRequestedAt
     }
 
     private static func read<T: Decodable>(_ type: T.Type, _ name: String) -> T? {
@@ -206,6 +235,17 @@ public enum SharedStore {
 
 /// One fetch with the cache as fallback: what the widgets and the app show.
 public struct Reading: Sendable {
+    public func freshnessNote(now: Date = Date(), staleAfter: TimeInterval = Reading.staleAfter) -> String? {
+        if SharedStore.isRefreshing(now: now) { return "Refreshing…" }
+        guard summary != nil, let at = fetchedAt ?? summary?.generatedAt else { return nil }
+        let time = at.formatted(date: Calendar.current.isDate(at, inSameDayAs: now) ? .omitted : .abbreviated,
+                                time: .shortened)
+        if error != nil { return "Offline · from \(time)" }
+        let elapsed = now.timeIntervalSince(at)
+        if elapsed > staleAfter { return "Refresh needed · from \(time)" }
+        return nil
+    }
+
     public enum LocalState: String, Sendable { case openApp, readingSources, needsSetup }
     public var localState: LocalState?
     public var summary: UsageSummary?

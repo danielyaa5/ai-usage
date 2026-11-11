@@ -1,4 +1,5 @@
 import AppKit
+import ServiceManagement
 import SwiftUI
 import WidgetKit
 import AIUsageKit
@@ -13,7 +14,7 @@ import AIUsageKit
 /// what it read. --render-previews draws each widget layout in light and dark mode to PNG files, from
 /// the dashboard or, with --sample, from made-up numbers.
 enum CommandLineMode {
-    static let flags = ["--set-server", "--refresh-once", "--render-previews", "--render-store-assets", "--help"]
+    static let flags = ["--set-server", "--refresh-once", "--render-previews", "--render-store-assets", "--help", "--register-login-item", "--unregister-login-item", "--login-item-status"]
     static let arguments = Array(CommandLine.arguments.dropFirst())
     static let isActive = arguments.contains { flags.contains($0) }
 
@@ -26,7 +27,34 @@ enum CommandLineMode {
               --refresh-once                read every period now and redraw the widgets
               --render-previews FOLDER      draw the widget layouts to PNG files
                   --sample                  with made-up numbers instead of the dashboard's
+              --register-login-item         register this app as a login item (SMAppService)
+              --unregister-login-item       unregister this app as a login item (SMAppService)
+              --login-item-status           print login item status
             """)
+            return 0
+        }
+        if arguments.contains("--register-login-item") {
+            do {
+                try LoginItem.set(true)
+                print("Login item registered. Status: \(SMAppService.mainApp.status.rawValue)")
+                return 0
+            } catch {
+                print("Failed to register login item: \(error)")
+                return 1
+            }
+        }
+        if arguments.contains("--unregister-login-item") {
+            do {
+                try LoginItem.set(false)
+                print("Login item unregistered. Status: \(SMAppService.mainApp.status.rawValue)")
+                return 0
+            } catch {
+                print("Failed to unregister login item: \(error)")
+                return 1
+            }
+        }
+        if arguments.contains("--login-item-status") {
+            print("Login item status: \(SMAppService.mainApp.status.rawValue)")
             return 0
         }
         if let address = value(after: "--set-server") {

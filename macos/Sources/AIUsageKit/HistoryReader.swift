@@ -2,7 +2,11 @@ import Foundation
 
 /// Each file keeps only accounting records and the offset of its last complete line.
 public actor HistoryReader {
-    private struct Timeline {
+    public static let defaultCacheURL: URL? = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+        .appendingPathComponent("AIUsage/history-cache-v3.json")
+
+    private struct Timeline: Codable {
+        var provider: HistoryProvider?
         var model = "unknown", session = ""
         var turns: [String: String] = [:]
         var explicitRecords = false
@@ -10,9 +14,15 @@ public actor HistoryReader {
         var modified = Date.distantPast
         var size: UInt64 = 0
         var inode: UInt64 = 0
+        var walModified = Date.distantPast
+        var walSize: UInt64 = 0
         var history = LocalHistory()
     }
-    private var files: [URL: Timeline] = [:]
+
+    private var files: [String: Timeline] = [:]
+    private let cacheURL: URL?
+    private var loaded = false
+    private var dirty = false
     private let iso = ISO8601DateFormatter()
     private let fractional: ISO8601DateFormatter = {
         let value = ISO8601DateFormatter()
@@ -22,11 +32,52 @@ public actor HistoryReader {
     private let manager = FileManager.default
     private let maxLine = 4_000_000
 
-    public init() {}
+    public init(cacheURL: URL? = nil) {
+        self.cacheURL = cacheURL
+    }
+
+    private func ensureLoaded() {
+        guard !loaded else { return }
+        loaded = true
+        guard let cacheURL, let data = try? Data(contentsOf: cacheURL) else { return }
+        if let decoded = try? JSONDecoder().decode([String: Timeline].self, from: data) {
+            self.files = decoded
+        }
+    }
+
+    public func flushCache() {
+        ensureLoaded()
+        guard dirty, let cacheURL else { return }
+        dirty = false
+        do {
+            let dir = cacheURL.deletingLastPathComponent()
+            try manager.createDirectory(at: dir, withIntermediateDirectories: true)
+            let data = try JSONEncoder().encode(files)
+            try data.write(to: cacheURL, options: .atomic)
+        } catch {}
+    }
+
+    public func cachedHistories(selected: Set<HistoryProvider>? = nil, now: Date = Date()) -> [HistoryProvider: LocalHistory] {
+        ensureLoaded()
+        let cutoff = now.addingTimeInterval(-30 * 86400)
+        var result: [HistoryProvider: LocalHistory] = [:]
+        for (_, state) in files where state.modified >= cutoff {
+            guard let provider = state.provider else { continue }
+            if let selected, !selected.contains(provider) { continue }
+            var h = state.history
+            h.events = h.events.filter { $0.value.date >= cutoff }
+            result[provider, default: LocalHistory()].merge(h)
+        }
+        return result
+    }
 
     public func scan(_ provider: HistoryProvider, at root: URL, now: Date = Date()) throws -> LocalHistory {
+        ensureLoaded()
         var merged = LocalHistory()
         let cutoff = now.addingTimeInterval(-30 * 86400)
+        let cacheCutoff = now.addingTimeInterval(-35 * 86400)
+        var seenPaths = Set<String>()
+
         for name in provider.logDirectories {
             let directory = root.appendingPathComponent(name, isDirectory: true)
             // The selected directory grants no implied permission to follow a link outside it.
@@ -47,17 +98,44 @@ public actor HistoryReader {
                 if provider == .codex && !url.lastPathComponent.hasPrefix("rollout-") { continue }
                 let values = try url.resourceValues(forKeys: Set(keys))
                 guard values.isRegularFile == true, values.isSymbolicLink != true,
-                      let modified = values.contentModificationDate, modified >= cutoff else { continue }
-                var state = files[url] ?? Timeline()
+                      let modified = values.contentModificationDate else { continue }
+                let key = url.standardizedFileURL.path
+                seenPaths.insert(key)
+
+                let existing = files[key]
+                if existing == nil && modified < cutoff { continue }
+                if modified < cacheCutoff { continue }
+
+                var state = existing ?? Timeline(provider: provider)
+                state.provider = provider
                 let attr = try manager.attributesOfItem(atPath: url.path)
                 let size = (attr[.size] as? NSNumber)?.uint64Value ?? 0
                 let inode = (attr[.systemFileNumber] as? NSNumber)?.uint64Value ?? 0
-                if state.modified != modified || state.size != size || state.inode != inode || provider == .antigravity {
+
+                let walURL = URL(fileURLWithPath: url.path + "-wal")
+                let walAttr = try? manager.attributesOfItem(atPath: walURL.path)
+                let walMod = (walAttr?[.modificationDate] as? Date) ?? Date.distantPast
+                let walSize = (walAttr?[.size] as? NSNumber)?.uint64Value ?? 0
+
+                let needsUpdate: Bool
+                if provider == .antigravity {
+                    needsUpdate = (existing == nil || state.modified != modified || state.size != size
+                        || state.inode != inode || state.walModified != walMod || state.walSize != walSize)
+                } else {
+                    needsUpdate = (existing == nil || state.modified != modified || state.size != size || state.inode != inode)
+                }
+
+                if needsUpdate {
+                    dirty = true
                     if provider == .antigravity {
-                        // SQLite may have new rows in a WAL before the main file changes.
                         state.history = try AntigravityHistory.read(url, since: cutoff)
+                        state.walModified = walMod
+                        state.walSize = walSize
                     } else {
-                        if inode != state.inode || size <= state.size { state = Timeline() }
+                        if state.inode != inode || size < state.size || state.offset > size {
+                            state = Timeline(provider: provider)
+                            state.inode = inode
+                        }
                         try read(url, provider: provider, state: &state, cutoff: cutoff)
                     }
                     state.modified = modified
@@ -65,17 +143,112 @@ public actor HistoryReader {
                     state.inode = inode
                 }
                 state.history.events = state.history.events.filter { $0.value.date >= cutoff }
-                files[url] = state
+                let rootPath = root.standardizedFileURL.path
+                let relPath = key.hasPrefix(rootPath) ? String(key.dropFirst(rootPath.count)) : key
+                let fileHash = Self.fnv1a64(relPath)
+                state.history.events = Self.compactEvents(state.history.events, fileHash: fileHash, now: now)
+                files[key] = state
                 merged.merge(state.history)
             }
             if let enumerationError { throw enumerationError }
         }
-        // A disconnected or deleted log never contributes to this scan.
-        files = files.filter { $0.value.modified >= cutoff }
+
+        // C1 Fix: Scope file pruning strictly to the provider currently being scanned.
+        // Inside sandbox, manager.fileExists() fails for bookmarks not currently active.
+        let beforeCount = files.count
+        files = files.filter { path, state in
+            if state.provider == provider {
+                return seenPaths.contains(path) && state.modified >= cacheCutoff
+            }
+            return true
+        }
+        if files.count != beforeCount { dirty = true }
+
         return merged
     }
 
-    public func forget() { files.removeAll() }
+    public func forget(provider: HistoryProvider? = nil) {
+        ensureLoaded()
+        if let provider {
+            let beforeCount = files.count
+            files = files.filter { $0.value.provider != provider }
+            if files.count != beforeCount {
+                dirty = true
+                flushCache()
+            }
+        } else {
+            files.removeAll()
+            dirty = false
+            if let cacheURL { try? manager.removeItem(at: cacheURL) }
+        }
+    }
+
+    public func retainOnly(providers: Set<HistoryProvider>) {
+        ensureLoaded()
+        let beforeCount = files.count
+        files = files.filter { guard let p = $0.value.provider else { return true }; return providers.contains(p) }
+        if files.count != beforeCount {
+            dirty = true
+            flushCache()
+        }
+    }
+
+    private static func fnv1a64(_ string: String) -> String {
+        var hash: UInt64 = 0xcbf29ce484222325
+        for byte in string.utf8 {
+            hash ^= UInt64(byte)
+            hash &*= 0x100000001b3
+        }
+        return String(format: "%016llx", hash)
+    }
+
+    private static func compactEvents(_ events: [String: UsageEvent], fileHash: String, now: Date) -> [String: UsageEvent] {
+        guard events.count > 20 else { return events }
+        var result: [String: UsageEvent] = [:]
+        var buckets: [String: UsageEvent] = [:]
+
+        for (id, event) in events {
+            let isOlderThan2h = now.timeIntervalSince(event.date) > 7200
+            let isCompacted = id.hasPrefix("h_")
+            if isOlderThan2h || isCompacted {
+                let hourTimestamp = floor(event.date.timeIntervalSince1970 / 3600) * 3600
+                let key = "h_\(fileHash)_\(Int(hourTimestamp))_\(event.model)_\(event.fast ? 1 : 0)"
+                if let existing = buckets[key] {
+                    buckets[key] = UsageEvent(
+                        id: key,
+                        date: Date(timeIntervalSince1970: hourTimestamp),
+                        model: event.model,
+                        input: existing.input + event.input,
+                        cached: existing.cached + event.cached,
+                        writes: existing.writes + event.writes,
+                        hourWrites: existing.hourWrites + event.hourWrites,
+                        output: existing.output + event.output,
+                        fast: event.fast,
+                        requests: existing.requests + event.requests
+                    )
+                } else {
+                    buckets[key] = UsageEvent(
+                        id: key,
+                        date: Date(timeIntervalSince1970: hourTimestamp),
+                        model: event.model,
+                        input: event.input,
+                        cached: event.cached,
+                        writes: event.writes,
+                        hourWrites: event.hourWrites,
+                        output: event.output,
+                        fast: event.fast,
+                        requests: event.requests
+                    )
+                }
+            } else {
+                result[id] = event
+            }
+        }
+        for (k, bucket) in buckets {
+            result[k] = bucket
+        }
+        return result
+    }
 
     private func read(_ url: URL, provider: HistoryProvider, state: inout Timeline, cutoff: Date) throws {
         let file = try FileHandle(forReadingFrom: url)
@@ -92,7 +265,11 @@ public actor HistoryReader {
                 else { skip = true; pending.removeAll(keepingCapacity: false) }
                 position += UInt64(count)
                 if end == chunk.endIndex { break }
-                if !skip { parse(pending, provider: provider, state: &state, cutoff: cutoff) }
+                if !skip {
+                    autoreleasepool {
+                        parse(pending, provider: provider, state: &state, cutoff: cutoff)
+                    }
+                }
                 position += 1
                 state.offset = position
                 pending.removeAll(keepingCapacity: true)

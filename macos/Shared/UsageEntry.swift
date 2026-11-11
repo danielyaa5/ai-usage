@@ -57,12 +57,8 @@ struct UsageEntry: TimelineEntry {
 
     /// A short line for the bottom of a widget when the reading isn't current; nil when it is.
     var freshnessNote: String? {
-        guard summary != nil, let at = fetchedAt ?? summary?.generatedAt else { return nil }
-        let time = at.formatted(date: Calendar.current.isDate(at, inSameDayAs: date) ? .omitted : .abbreviated,
-                                time: .shortened)
-        if error != nil { return "Offline · from \(time)" }
-        if let dataAge, dataAge > Self.staleAfter { return "Refresh needed · from \(time)" }
-        return nil
+        Reading(summary: summary, fetchedAt: fetchedAt, error: error, server: server)
+            .freshnessNote(now: date, staleAfter: Self.staleAfter)
     }
 
     var plans: [Plan] {

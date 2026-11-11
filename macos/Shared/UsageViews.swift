@@ -334,19 +334,29 @@ struct FreshnessNote: View {
 
     var body: some View {
         if let note = entry.freshnessNote {
-            if entry.server == SharedStore.localURL {
-                Link(destination: AppLink.refresh.url) { label(note) }
-                    .help("Open AI Usage and refresh local history")
-            } else {
-                Button(intent: RefreshUsageIntent()) { label(note) }
-                    .buttonStyle(.plain)
-                    .help(entry.error ?? "Refresh the dashboard")
+            Button(intent: RefreshUsageIntent()) {
+                ViewThatFits(in: .horizontal) {
+                    label(note)
+                    if let at = entry.fetchedAt ?? entry.summary?.generatedAt {
+                        if note.hasPrefix("Refresh needed") {
+                            label("Refresh needed · \(Format.ago(at, now: entry.date))")
+                            label("↻ \(Format.ago(at, now: entry.date))")
+                        } else if note.hasPrefix("Offline") {
+                            label("Offline · \(Format.ago(at, now: entry.date))")
+                            label("Offline")
+                        }
+                    }
+                    label(note.components(separatedBy: " · ").first ?? note)
+                }
             }
+            .buttonStyle(.plain)
+            .help(entry.error ?? "Refresh usage")
         }
     }
 
     private func label(_ note: String) -> some View {
-        Label(note, systemImage: entry.error == nil ? "arrow.clockwise" : "wifi.exclamationmark")
+        let icon = (note == "Refreshing…" || entry.error == nil) ? "arrow.clockwise" : "wifi.exclamationmark"
+        return Label(note, systemImage: icon)
             .font(.system(size: 9.5, weight: .medium))
             .foregroundStyle(Palette(scheme: scheme).stale)
             .lineLimit(1)
@@ -501,13 +511,14 @@ struct WidgetHeader: View {
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(palette.primary)
                 .lineLimit(1)
-                .layoutPriority(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .layoutPriority(2)
             if let host = entry.summary?.host {
                 Text(host).font(.system(size: 10)).foregroundStyle(palette.muted).lineLimit(1)
             }
             Spacer(minLength: 4)
             if entry.freshnessNote != nil {
-                FreshnessNote(entry: entry).fixedSize().layoutPriority(2)
+                FreshnessNote(entry: entry).layoutPriority(1)
             } else if let at = entry.fetchedAt ?? entry.summary?.generatedAt {
                 Text(at, style: .time).font(.system(size: 10)).foregroundStyle(palette.muted).fixedSize()
             }

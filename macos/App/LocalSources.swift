@@ -18,7 +18,7 @@ final class LocalSources: ObservableObject {
     let claudeLive: ClaudeTestQuota
     private var claudeObserver: AnyCancellable?
     #endif
-    private let history = HistoryReader()
+    private let history = HistoryReader(cacheURL: HistoryReader.defaultCacheURL)
     private let account = ChatGPTAccount()
     private var listener: LoopbackServer?
     private var googleQuotaCheck: Task<[LimitWindow], Error>?
@@ -133,7 +133,7 @@ final class LocalSources: ObservableObject {
             if provider == .codex { codexHistoryObservedAt = nil }
             historyIssues[provider] = nil
             messages[provider] = "Reading history…"
-            sourcesChanged(discardReadings: replacing, forgetHistory: replacing)
+            sourcesChanged(discardReadings: replacing, forgetProvider: replacing ? provider : nil)
         } catch { notice = "Could not save read-only access. Choose the folder again." }
     }
     func forget(_ provider: HistoryProvider) {
@@ -142,7 +142,7 @@ final class LocalSources: ObservableObject {
         if provider == .codex { codexHistoryObservedAt = nil }
         historyIssues[provider] = nil
         messages[provider] = nil
-        sourcesChanged(discardReadings: true, forgetHistory: true)
+        sourcesChanged(discardReadings: true, forgetProvider: provider)
     }
 
     private static var claudeDesktopDirectory: URL? {
@@ -320,10 +320,10 @@ final class LocalSources: ObservableObject {
         catch { notice = "Couldn’t update the widget’s connection status. Reopen AI Usage and try again." }
     }
 
-    private func sourcesChanged(discardReadings: Bool, forgetHistory: Bool = false) {
+    private func sourcesChanged(discardReadings: Bool, forgetProvider: HistoryProvider? = nil) {
         revision += 1
         publishConnectionState(discardReadings: discardReadings)
-        if forgetHistory { Task { await history.forget(); changed?() } }
+        if let forgetProvider { Task { await history.forget(provider: forgetProvider); changed?() } }
         else { changed?() }
     }
     func cancelLogin() { account.cancel() }
@@ -416,59 +416,37 @@ final class LocalSources: ObservableObject {
         if !claudeRequestCopied { notice = "Couldn’t copy the setup request. Try again." }
     }
 
-    func collect(now: Date) async -> SharedStore.LocalSnapshot? {
+    func collectQuotas(now: Date) async -> (limits: [HistoryProvider: [LimitWindow]], issues: [HistoryProvider: String]) {
         let run = revision
-        var histories: [HistoryProvider:LocalHistory] = [:], issues: [HistoryProvider:String] = [:],
-            historyErrors: [HistoryProvider:String] = [:], status: [HistoryProvider:String] = [:]
-        for provider in selected {
-            guard let data = defaults.data(forKey:bookmarkKey(provider)) else { continue }
-            do {
-                var stale = false
-                let url = try URL(resolvingBookmarkData:data, options:[.withSecurityScope,.withoutUI],relativeTo:nil,bookmarkDataIsStale:&stale)
-                guard url.startAccessingSecurityScopedResource() else { throw CocoaError(.fileReadNoPermission) }
-                defer { url.stopAccessingSecurityScopedResource() }
-                if stale, let updated = try? url.bookmarkData(options:[.withSecurityScope,.securityScopeAllowOnlyReadAccess],
-                    includingResourceValuesForKeys:nil,relativeTo:nil) {
-                    defaults.set(updated, forKey:bookmarkKey(provider))
-                }
-                let reading = try await history.scan(provider,at:url,now:now)
-                histories[provider] = reading
-                status[provider] = reading.events.isEmpty ? "Connected · no usage in the last 30 days" :
-                    "Connected · \(reading.events.count.formatted()) recorded requests"
-            } catch {
-                let message = "History could not be read. Choose the folder again."
-                historyErrors[provider] = message
-                status[provider] = message
-            }
-            guard active && run == revision else { return nil }
-        }
+        var issues: [HistoryProvider: String] = [:]
+        var connectedLimits: [HistoryProvider: [LimitWindow]] = [:]
+
         if chatConnected && !accountBusy {
             do {
                 let latest = try await account.limits()
-                guard active && run == revision else { return nil }
+                guard active && run == revision else { return ([:], [:]) }
                 keep(latest, for: .codex)
                 chatQuotaIssue = nil
             } catch {
-                guard active && run == revision else { return nil }
+                guard active && run == revision else { return ([:], [:]) }
                 let message = "Couldn’t refresh ChatGPT limits. Check your connection and try Refresh now."
                 issues[.codex] = message
                 chatQuotaIssue = message
             }
         }
-        guard active && run == revision else { return nil }
-        var connectedLimits: [HistoryProvider:[LimitWindow]] = [:]
         if chatConnected { connectedLimits[.codex] = windows[.codex] ?? [] }
+
         #if CLAUDE_QUOTA_TEST
         if claudeLive.enabled {
             await claudeLive.checkIfDue()
-            guard active && run == revision else { return nil }
+            guard active && run == revision else { return ([:], [:]) }
             connectedLimits[.claude] = claudeLive.windows
             if claudeLive.state != .current { issues[.claude] = claudeLive.status }
         }
         #endif
         if connectedLimits[.claude] == nil, claudeDesktop != nil {
             let state = await readClaudeDesktop(now: now)
-            guard active && run == revision else { return nil }
+            guard active && run == revision else { return ([:], [:]) }
             if state != claudeDesktop { claudeDesktop = state }
             if let entry = enteredDesktopUsage, let saved = state.windows.first?.observedAt, saved >= entry.recordedAt {
                 enteredDesktopUsage = nil
@@ -480,21 +458,19 @@ final class LocalSources: ObservableObject {
             connectedLimits[.claude] = windows[.claude] ?? []
             if let claudeSetupError { issues[.claude] = claudeSetupError }
         }
-        codexHistoryObservedAt = histories[.codex]?.windows.compactMap(\.observedAt).max()
-        if messages != status { messages = status }
-        if historyIssues != historyErrors { historyIssues = historyErrors }
+
         if googleQuotaConnected {
             cancelGoogleQuotaCheck()
             let check = Task { try await readGoogleQuota() }
             googleQuotaCheck = check
             do {
                 let windows = try await check.value
-                guard active && run == revision else { return nil }
+                guard active && run == revision else { return ([:], [:]) }
                 connectedLimits[.antigravity] = windows
                 googleQuotaObservedAt = windows.compactMap(\.observedAt).max()
                 googleQuotaStatus = "Connected · \(windows.count) quota windows"
             } catch {
-                guard active && run == revision else { return nil }
+                guard active && run == revision else { return ([:], [:]) }
                 let reason = (error as? AntigravityQuotaError)?.rawValue ?? AntigravityQuotaError.permission.rawValue
                 connectedLimits[.antigravity] = []
                 googleQuotaObservedAt = nil
@@ -503,12 +479,73 @@ final class LocalSources: ObservableObject {
             }
             googleQuotaCheck = nil
         }
+
+        return (connectedLimits, issues)
+    }
+
+    func fastSnapshot(quotas: (limits: [HistoryProvider: [LimitWindow]], issues: [HistoryProvider: String]), now: Date) async -> SharedStore.LocalSnapshot {
+        let cached = await history.cachedHistories(selected: selected, now: now)
+        let prices = self.prices
+        let currentHistoryIssues = self.historyIssues
+        let summaries = await Task.detached(priority: .utility) {
+            LocalSummary.build(histories: cached, limits: quotas.limits, issues: quotas.issues,
+                               historyIssues: currentHistoryIssues, prices: prices, now: now)
+        }.value
+        return .init(summaries: summaries, hasSources: hasSources)
+    }
+
+    func scanHistories(now: Date) async -> (histories: [HistoryProvider: LocalHistory], historyErrors: [HistoryProvider: String]) {
+        let run = revision
+        var histories: [HistoryProvider: LocalHistory] = [:]
+        var historyErrors: [HistoryProvider: String] = [:]
+        var status: [HistoryProvider: String] = [:]
+        for provider in selected {
+            guard let data = defaults.data(forKey: bookmarkKey(provider)) else { continue }
+            do {
+                var stale = false
+                let url = try URL(resolvingBookmarkData: data, options: [.withSecurityScope, .withoutUI], relativeTo: nil, bookmarkDataIsStale: &stale)
+                guard url.startAccessingSecurityScopedResource() else { throw CocoaError(.fileReadNoPermission) }
+                defer { url.stopAccessingSecurityScopedResource() }
+                if stale, let updated = try? url.bookmarkData(options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess],
+                    includingResourceValuesForKeys: nil, relativeTo: nil) {
+                    defaults.set(updated, forKey: bookmarkKey(provider))
+                }
+                let reading = try await history.scan(provider, at: url, now: now)
+                histories[provider] = reading
+                let requestCount = reading.events.values.reduce(0) { $0 + $1.requests }
+                status[provider] = reading.events.isEmpty ? "Connected · no usage in the last 30 days" :
+                    "Connected · \(requestCount.formatted()) recorded requests"
+            } catch {
+                let message = "History could not be read. Choose the folder again."
+                historyErrors[provider] = message
+                status[provider] = message
+            }
+            guard active && run == revision else { return ([:], [:]) }
+        }
+        await history.flushCache()
+        codexHistoryObservedAt = histories[.codex]?.windows.compactMap(\.observedAt).max()
+        if messages != status { messages = status }
+        if historyIssues != historyErrors { historyIssues = historyErrors }
+        return (histories, historyErrors)
+    }
+
+    func fullSnapshot(quotas: (limits: [HistoryProvider: [LimitWindow]], issues: [HistoryProvider: String]),
+                      histories: [HistoryProvider: LocalHistory],
+                      historyErrors: [HistoryProvider: String], now: Date) async -> SharedStore.LocalSnapshot {
         let prices = self.prices
         let summaries = await Task.detached(priority: .utility) {
-            LocalSummary.build(histories: histories, limits: connectedLimits, issues: issues,
+            LocalSummary.build(histories: histories, limits: quotas.limits, issues: quotas.issues,
                                historyIssues: historyErrors, prices: prices, now: now)
         }.value
-        guard active && run == revision else { return nil }
         return .init(summaries: summaries, hasSources: hasSources)
+    }
+
+    func collect(now: Date) async -> SharedStore.LocalSnapshot? {
+        let run = revision
+        let quotas = await collectQuotas(now: now)
+        guard active && run == revision else { return nil }
+        let (histories, historyErrors) = await scanHistories(now: now)
+        guard active && run == revision else { return nil }
+        return await fullSnapshot(quotas: quotas, histories: histories, historyErrors: historyErrors, now: now)
     }
 }

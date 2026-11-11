@@ -22,14 +22,16 @@ public enum HistoryProvider: String, CaseIterable, Codable, Sendable {
     }
 }
 
-public struct UsageEvent: Sendable {
+public struct UsageEvent: Sendable, Codable, Equatable {
     public let id: String
     public let date: Date
     public let model: String
     public let input, cached, writes, hourWrites, output: Int
     public let fast: Bool
+    public let requests: Int
+
     public init(id: String, date: Date, model: String, input: Int, cached: Int, writes: Int = 0,
-                hourWrites: Int = 0, output: Int, fast: Bool = false) {
+                hourWrites: Int = 0, output: Int, fast: Bool = false, requests: Int = 1) {
         self.id = id
         self.date = date
         self.model = model
@@ -39,6 +41,25 @@ public struct UsageEvent: Sendable {
         self.hourWrites = hourWrites
         self.output = output
         self.fast = fast
+        self.requests = max(1, requests)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, date, model, input, cached, writes, hourWrites, output, fast, requests
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        date = try container.decode(Date.self, forKey: .date)
+        model = try container.decode(String.self, forKey: .model)
+        input = try container.decode(Int.self, forKey: .input)
+        cached = try container.decode(Int.self, forKey: .cached)
+        writes = try container.decodeIfPresent(Int.self, forKey: .writes) ?? 0
+        hourWrites = try container.decodeIfPresent(Int.self, forKey: .hourWrites) ?? 0
+        output = try container.decode(Int.self, forKey: .output)
+        fast = try container.decodeIfPresent(Bool.self, forKey: .fast) ?? false
+        requests = try container.decodeIfPresent(Int.self, forKey: .requests) ?? 1
     }
 }
 
@@ -63,7 +84,7 @@ public struct LocalPrices: Decodable, Sendable {
     }
 }
 
-public struct LocalHistory: Sendable {
+public struct LocalHistory: Sendable, Codable, Equatable {
     public var events: [String: UsageEvent] = [:]
     public var windows: [LimitWindow] = []
     public init() {}
@@ -95,12 +116,12 @@ public enum LocalSummary {
                 var count = 0, tokens = 0, cost = 0.0
                 for event in history.events.values where event.date >= start && event.date <= now {
                     let input = event.input + event.cached + event.writes
-                    count += 1
+                    count += event.requests
                     tokens += input + event.output
                     cachedInput += event.cached
                     allInput += input
                     totals.output += event.output
-                    if let amount = prices?.estimate(event) { cost += amount } else { totals.unpriced += 1 }
+                    if let amount = prices?.estimate(event) { cost += amount } else { totals.unpriced += event.requests }
                 }
                 let title = source == .codex ? "ChatGPT" : source == .claude ? "Claude" : source.title
                 plans.append(Plan(plan: title, title: title, short: title, vendor: source.vendor, monthlyUsd: nil,

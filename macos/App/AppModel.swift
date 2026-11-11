@@ -87,7 +87,7 @@ final class AppModel: ObservableObject {
         settingsPage = page
         if source == .local, local.hasSources {
             reloadAfterSetup = true
-            refresh()
+            refresh(userInitiated: true)
         }
     }
 
@@ -119,7 +119,20 @@ final class AppModel: ObservableObject {
     }
 
     func start() {
-        local.changed = { [weak self] in self?.refresh() }
+        let hostBundleID = Bundle.main.bundleIdentifier ?? "AIUsage"
+        DistributedNotificationCenter.default().addObserver(
+            self,
+            selector: #selector(handleExternalRefreshNotification),
+            name: NSNotification.Name("\(hostBundleID).refresh"),
+            object: nil
+        )
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(handleWakeNotification),
+            name: NSWorkspace.didWakeNotification,
+            object: nil
+        )
+        local.changed = { [weak self] in self?.refresh(userInitiated: false) }
         local.activate(source == .local)
         local.connectionStateChanged = { [weak self] in
             guard let self, self.source == .local else { return }
@@ -135,12 +148,34 @@ final class AppModel: ObservableObject {
             }
         }
         reloadWidgets()
-        refresh()
+        refresh(userInitiated: false)
+    }
+
+    @objc nonisolated private func handleExternalRefreshNotification(_ notification: Notification) {
+        Task { @MainActor in
+            self.refresh(userInitiated: true)
+        }
+    }
+
+    @objc nonisolated private func handleWakeNotification(_ notification: Notification) {
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            self.refresh(userInitiated: false)
+        }
     }
 
     /// Reads every period now unless a read is already running (one at a time).
-    func refresh() {
-        guard !refreshing else { refreshAgain = true; return }
+    func refresh(userInitiated: Bool = false) {
+        if userInitiated {
+            SharedStore.markRefreshing()
+        }
+        guard !refreshing else {
+            refreshAgain = true
+            if userInitiated {
+                reloadWidgets()
+            }
+            return
+        }
         refreshing = true
         timer?.invalidate()
         let run = generation
@@ -148,18 +183,69 @@ final class AppModel: ObservableObject {
     }
 
     private func readAll(run: Int) async {
+        let activity = ProcessInfo.processInfo.beginActivity(
+            options: .userInitiatedAllowingIdleSystemSleep,
+            reason: "Refresh AI Usage"
+        )
+        defer { ProcessInfo.processInfo.endActivity(activity) }
+
         let now = Date()
         let revision = local.revision
+        let wasRefreshingMarked = SharedStore.isRefreshing()
         var results: [String: Reading] = [:]
         if source == .local {
-            let snapshot = await local.collect(now: now)
+            // Stage 1: Fast Quotas First (~1-2 seconds)
+            let quotas = await local.collectQuotas(now: now)
             guard run == generation else { return }
-            guard let snapshot, revision == local.revision else { restartLocalRead(); return }
-            do { try SharedStore.publishLocal(snapshot) }
-            catch { local.notice = "Could not share the reading with the widget. Reopen AI Usage and try again." }
+            guard revision == local.revision else {
+                restartLocalRead(userInitiated: wasRefreshingMarked)
+                return
+            }
+            let fastSnapshot = await local.fastSnapshot(quotas: quotas, now: now)
+            guard run == generation else { return }
+            guard revision == local.revision else {
+                restartLocalRead(userInitiated: wasRefreshingMarked)
+                return
+            }
+            do {
+                try SharedStore.publishLocal(fastSnapshot)
+                for range in UsageRanges.all {
+                    if let s = fastSnapshot.summaries[range] {
+                        readings[range] = Reading(summary: s, fetchedAt: s.generatedAt, error: fastSnapshot.issue, server: SharedStore.localURL)
+                    }
+                }
+                reloadWidgets(at: now)
+            } catch {
+                local.notice = "Could not share the reading with the widget. Reopen AI Usage and try again."
+            }
+
+            // Stage 2: Incremental History Scan
+            let (histories, historyErrors) = await local.scanHistories(now: now)
+            guard run == generation && revision == local.revision else {
+                restartLocalRead(userInitiated: wasRefreshingMarked)
+                return
+            }
+            let fullSnapshot = await local.fullSnapshot(quotas: quotas, histories: histories, historyErrors: historyErrors, now: now)
+            guard run == generation && revision == local.revision else {
+                restartLocalRead(userInitiated: wasRefreshingMarked)
+                return
+            }
+            do {
+                try SharedStore.publishLocal(fullSnapshot)
+                for range in UsageRanges.all {
+                    if let s = fullSnapshot.summaries[range] {
+                        readings[range] = Reading(summary: s, fetchedAt: s.generatedAt, error: fullSnapshot.issue, server: SharedStore.localURL)
+                    }
+                }
+            } catch {
+                local.notice = "Could not share the reading with the widget. Reopen AI Usage and try again."
+            }
         }
         guard run == generation else { return }
-        if source == .local && revision != local.revision { restartLocalRead(); return }
+        if source == .local && revision != local.revision {
+            restartLocalRead(userInitiated: wasRefreshingMarked)
+            return
+        }
         await withTaskGroup(of: (String, Reading).self) { group in
             for range in UsageRanges.all {
                 group.addTask { (range, await Reading.load(range: range, record: true, now: now)) }
@@ -172,32 +258,42 @@ final class AppModel: ObservableObject {
         readings = results
         lastAttempt = now
         refreshing = false
+        let shouldClear = (wasRefreshingMarked || SharedStore.isRefreshing()) && !refreshAgain
+        if shouldClear {
+            SharedStore.clearRefreshing()
+        }
         failures = results.values.contains { $0.error != nil } ? failures + 1 : 0
 
-        // Redraw when something the widgets show changed, and at least every half hour so their
-        // "as of" times stay true even when macOS defers their own reloads.
+        // Redraw when something the widgets show changed, or if a user-initiated refresh was marked,
+        // so widgets are never stranded on "Refreshing…"
         let signature = Self.signature(results)
-        if reloadAfterSetup || signature != shown || lastReload.map({ now.timeIntervalSince($0) > 30 * 60 }) ?? true {
+        let changed = reloadAfterSetup || signature != shown || lastReload.map({ now.timeIntervalSince($0) > 30 * 60 }) ?? true
+        if shouldClear || wasRefreshingMarked || changed {
             reloadAfterSetup = false
             shown = signature
             reloadWidgets(at: now)
         }
-        if refreshAgain { refreshAgain = false; refresh() } else { schedule() }
+        if refreshAgain {
+            refreshAgain = false
+            refresh(userInitiated: wasRefreshingMarked || SharedStore.isRefreshing())
+        } else {
+            schedule()
+        }
     }
 
     /// The connected sources changed while their reading was in flight. Read the new set without
     /// publishing the interrupted result or replacing the app's preview with an empty entry.
-    private func restartLocalRead() {
+    private func restartLocalRead(userInitiated: Bool = false) {
         refreshing = false
         refreshAgain = false
-        refresh()
+        refresh(userInitiated: userInitiated || SharedStore.isRefreshing())
     }
 
     private func schedule() {
         let backoff = failures == 0 ? 1 : pow(2, Double(min(failures, 3)))
         let delay = min(30 * 60, Self.interval * backoff)
         let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
-            Task { @MainActor in self?.refresh() }
+            Task { @MainActor in self?.refresh(userInitiated: false) }
         }
         timer.tolerance = 20
         RunLoop.main.add(timer, forMode: .common)

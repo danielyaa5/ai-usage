@@ -40,6 +40,7 @@ struct AIUsageApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = AppModel()
     private var menuBar: MenuBarController?
+    private var openedFromURL = false
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         if CommandLineMode.isActive { NSApp.setActivationPolicy(.prohibited) }
@@ -50,12 +51,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { @MainActor in exit(await CommandLineMode.run(model: self.model)) }
             return
         }
-        RefreshUsageIntent.inApp = { [weak self] in self?.model.refresh() }
+        RefreshUsageIntent.inApp = { [weak self] in self?.model.refresh(userInitiated: true) }
         menuBar = MenuBarController(model: model)
         model.start()
         // Finder and Spotlight send an open-application event. Login items, services and widget
         // links have their own launch behavior and must not raise an extra settings window.
         guard !CommandLine.arguments.contains("--background"),
+              !openedFromURL,
               let event = NSAppleEventManager.shared().currentAppleEvent,
               event.eventID == kAEOpenApplication else { return }
         let reason = event.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue
@@ -66,10 +68,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// aiusage://dashboard from a widget click opens the dashboard; aiusage://settings opens settings.
     func application(_ application: NSApplication, open urls: [URL]) {
+        openedFromURL = true
         for url in urls where url.scheme == AppLink.scheme {
             if url.host == "refresh" {
-                model.refresh()
-                SettingsWindow.show(model: model, page: .widgets)
+                model.refresh(userInitiated: true)
             } else if url.host == "settings" {
                 SettingsWindow.show(model: model)
             } else {

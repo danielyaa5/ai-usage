@@ -1,4 +1,5 @@
 import AppIntents
+import AppKit
 import WidgetKit
 import AIUsageKit
 
@@ -26,20 +27,77 @@ struct RefreshUsageIntent: AppIntent {
     @MainActor static var inApp: (@MainActor () -> Void)?
 
     func perform() async throws -> some IntentResult {
-        if await Self.refreshInApp() { return .result() }
-        // macOS doesn't redraw a widget while its button's intent runs, so this returns at once. The
-        // request makes the timelines macOS reloads next read the dashboard rather than reuse the
-        // shared reading; the reads below redraw every widget again when they finish.
-        SharedStore.requestRefresh()
-        Task.detached {
+        SharedStore.markRefreshing()
+        WidgetCenter.shared.reloadAllTimelines()
+
+        // 1. In-app trigger
+        if await Self.refreshInApp() {
+            let start = Date()
+            while Date().timeIntervalSince(start) < 6.0 {
+                if !SharedStore.isRefreshing() { break }
+                try? await Task.sleep(nanoseconds: 250_000_000)
+            }
+            WidgetCenter.shared.reloadAllTimelines()
+            return .result()
+        }
+
+        // 2. Running in widget extension (inApp == nil)
+        let config = SharedStore.loadConfig()
+        let isLocal = (config.source == .local || config.server == SharedStore.localURL)
+
+        if isLocal {
+            let baselineSnapshot = SharedStore.readLocalSnapshot()
+            let baselineTimestamp = baselineSnapshot?.summaries.values.compactMap(\.generatedAt).max() ?? .distantPast
+
+            let hostBundleID: String
+            if let bundleID = Bundle.main.bundleIdentifier {
+                if bundleID.hasSuffix(".Widgets") {
+                    hostBundleID = String(bundleID.dropLast(".Widgets".count))
+                } else {
+                    hostBundleID = bundleID
+                }
+            } else {
+                hostBundleID = (Bundle.main.infoDictionary?["CFBundleIdentifier"] as? String) ?? "AIUsage"
+            }
+
+            DistributedNotificationCenter.default().postNotificationName(
+                NSNotification.Name("\(hostBundleID).refresh"),
+                object: nil,
+                userInfo: nil,
+                deliverImmediately: true
+            )
+
+            let running = NSRunningApplication.runningApplications(withBundleIdentifier: hostBundleID)
+            if running.isEmpty {
+                let openConfig = NSWorkspace.OpenConfiguration()
+                openConfig.activates = false
+                openConfig.addsToRecentItems = false
+                NSWorkspace.shared.open(AppLink.refresh.url, configuration: openConfig, completionHandler: nil)
+            }
+
+            let pollStart = Date()
+            while Date().timeIntervalSince(pollStart) < 6.0 {
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                let currentSnapshot = SharedStore.readLocalSnapshot()
+                let currentTimestamp = currentSnapshot?.summaries.values.compactMap(\.generatedAt).max() ?? .distantPast
+                if currentTimestamp > baselineTimestamp {
+                    break
+                }
+            }
+
+            WidgetCenter.shared.reloadAllTimelines()
+            return .result()
+        } else {
+            // Dashboard mode
             await withTaskGroup(of: Void.self) { group in
                 for range in UsageRanges.all {
                     group.addTask { _ = await Reading.load(range: range, timeout: 8) }
                 }
             }
+            SharedStore.clearRefreshing()
             WidgetCenter.shared.reloadAllTimelines()
+            return .result()
         }
-        return .result()
     }
 
     @MainActor private static func refreshInApp() -> Bool {
