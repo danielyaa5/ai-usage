@@ -103,7 +103,7 @@ struct MenuBarSettings: View {
         Toggle("Show AI Usage in the menu bar", isOn: $model.showMenuBarIcon)
         VStack(alignment: .leading, spacing: 12) {
             Text("Quota meters").font(.headline)
-            Text("Choose the meters to show in place of the AI icon. Each shows the lowest remaining limit for that provider. A dashed line means there’s no current reading.")
+            Text("Choose the meters to show in place of the AI icon. Claude uses All models, Codex / ChatGPT uses its lowest current limit, and Google uses Gemini’s weekly limit. A dashed line means there’s no current reading.")
                 .font(.callout).foregroundStyle(.secondary)
             ForEach(HistoryProvider.allCases, id: \.self) { provider in
                 HStack {
