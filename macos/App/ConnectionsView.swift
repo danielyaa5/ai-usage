@@ -38,7 +38,7 @@ struct ReadingState: View {
 
 extension LocalSources {
     func connectionLabel(_ provider: HistoryProvider) -> String {
-        let history = selected.contains(provider)
+        let history = selected.contains(provider) && historyIssues[provider] == nil
         #if CLAUDE_QUOTA_TEST
         if provider == .claude, claudeLive.enabled { return claudeLive.label }
         #endif
@@ -53,6 +53,7 @@ extension LocalSources {
         }
         if provider == .claude && claudeSetupError != nil || provider == .codex && chatQuotaIssue != nil { return "Needs attention" }
         if lastQuotaReading(provider) != nil { return history ? "History and quota" : "Quota connected" }
+        if historyIssues[provider] != nil { return "Needs attention" }
         switch provider {
         case .claude where statusLineEnabled: return "Waiting for Terminal"
         case .codex where chatConnected: return "Signed in"
@@ -70,6 +71,7 @@ extension LocalSources {
         }
         if provider == .claude && claudeSetupError != nil || provider == .codex && chatQuotaIssue != nil { return .orange }
         if lastQuotaReading(provider) != nil { return .green }
+        if historyIssues[provider] != nil { return .orange }
         if provider == .claude && statusLineEnabled || provider == .codex && chatConnected ||
             provider == .antigravity && googleQuotaConnected { return .orange }
         return selected.contains(provider) ? .accentColor : .secondary
@@ -101,10 +103,14 @@ struct HistoryConnection: View {
                         .accessibilityLabel("Disconnect " + provider.title + " history")
                 }
             }
-            Text(local.messages[provider] ?? (local.selected.contains(provider) ? "Folder selected" :
-                (provider == .claude ? "Choose your .claude folder to count requests and tokens from Claude Code sessions on this Mac." :
-                 "Choose your \(provider.folder) folder to count recorded requests and tokens.")))
-                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            if let issue = local.historyIssues[provider] {
+                ReadingState(text: issue, color: .orange)
+            } else {
+                Text(local.messages[provider] ?? (local.selected.contains(provider) ? "Folder selected" :
+                    (provider == .claude ? "Choose your .claude folder to count requests and tokens from Claude Code sessions on this Mac." :
+                     "Choose your \(provider.folder) folder to count recorded requests and tokens.")))
+                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
             Button(local.selected.contains(provider) ? "Choose another folder…" : "Connect history…") { local.pick(provider) }
                 .accessibilityIdentifier("history-" + provider.rawValue)
         }.frame(maxWidth: .infinity, alignment: .leading)

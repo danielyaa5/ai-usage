@@ -76,7 +76,8 @@ public struct LocalHistory: Sendable {
 
 public enum LocalSummary {
     public static func build(histories: [HistoryProvider: LocalHistory], limits: [HistoryProvider: [LimitWindow]],
-                             issues: [HistoryProvider: String], prices: LocalPrices?, now: Date) -> [String: UsageSummary] {
+                             issues: [HistoryProvider: String], historyIssues: [HistoryProvider: String] = [:],
+                             prices: LocalPrices?, now: Date) -> [String: UsageSummary] {
         let calendar = Calendar.current
         var result: [String: UsageSummary] = [:]
         for (range, label, days) in [("today", "Today", 0), ("7d", "Last 7 days", 7), ("30d", "Last 30 days", 30)] {
@@ -86,7 +87,8 @@ public enum LocalSummary {
                                 backgroundCost: 0, topBackgroundJob: nil)
             var cachedInput = 0, allInput = 0
             for source in HistoryProvider.allCases {
-                guard histories[source] != nil || limits[source] != nil || issues[source] != nil else { continue }
+                let issue = issues[source] ?? (limits[source] == nil ? historyIssues[source] : nil)
+                guard histories[source] != nil || limits[source] != nil || issue != nil else { continue }
                 let history = histories[source] ?? LocalHistory()
                 // Prefer the latest observation, including an account reply with fewer windows.
                 let windows = limits[source] ?? history.windows
@@ -103,7 +105,7 @@ public enum LocalSummary {
                 let title = source == .codex ? "ChatGPT" : source == .claude ? "Claude" : source.title
                 plans.append(Plan(plan: title, title: title, short: title, vendor: source.vendor, monthlyUsd: nil,
                                   cost: cost, proratedUsd: nil, requests: count, tokens: tokens, windows: windows,
-                                  notes: [], warning: issues[source], warningShort: issues[source] == nil ? nil : "Check setup"))
+                                  notes: [], warning: issue, warningShort: issue == nil ? nil : "Check setup"))
                 totals.cost += cost
                 totals.tokens += tokens
                 totals.requests += count

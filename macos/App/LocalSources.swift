@@ -41,6 +41,7 @@ final class LocalSources: ObservableObject {
     private static let googleQuotaHelp = "See the quota Google reports for Gemini and other model groups. Sign in to the Antigravity desktop app on this Mac and keep it running. Connect opens it and asks for folder access if needed."
     @Published private(set) var googleQuotaStatus = LocalSources.googleQuotaHelp
     @Published private(set) var messages: [HistoryProvider: String] = [:]
+    @Published private(set) var historyIssues: [HistoryProvider: String] = [:]
     @Published var notice: String?
     var changed: (() -> Void)?
     var connectionStateChanged: (() -> Void)?
@@ -130,6 +131,7 @@ final class LocalSources: ObservableObject {
             defaults.set(bookmark, forKey:bookmarkKey(provider))
             let replacing = !selected.insert(provider).inserted
             if provider == .codex { codexHistoryObservedAt = nil }
+            historyIssues[provider] = nil
             messages[provider] = "Reading history…"
             sourcesChanged(discardReadings: replacing, forgetHistory: replacing)
         } catch { notice = "Could not save read-only access. Choose the folder again." }
@@ -138,6 +140,7 @@ final class LocalSources: ObservableObject {
         defaults.removeObject(forKey: bookmarkKey(provider))
         selected.remove(provider)
         if provider == .codex { codexHistoryObservedAt = nil }
+        historyIssues[provider] = nil
         messages[provider] = nil
         sourcesChanged(discardReadings: true, forgetHistory: true)
     }
@@ -208,9 +211,8 @@ final class LocalSources: ObservableObject {
             guard folder.standardizedFileURL == Self.claudeDesktopDirectory?.standardizedFileURL,
                   folder.startAccessingSecurityScopedResource() else { return .unavailable(.access) }
             defer { folder.stopAccessingSecurityScopedResource() }
-            if stale {
-                let renewed = try folder.bookmarkData(options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess],
-                                                      includingResourceValuesForKeys: nil, relativeTo: nil)
+            if stale, let renewed = try? folder.bookmarkData(options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess],
+                                                             includingResourceValuesForKeys: nil, relativeTo: nil) {
                 defaults.set(renewed, forKey: "claudeDesktopFolder")
             }
             let values = try await Task.detached(priority: .utility) {
@@ -301,9 +303,8 @@ final class LocalSources: ObservableObject {
                           relativeTo: nil, bookmarkDataIsStale: &stale)
         guard url.startAccessingSecurityScopedResource() else { throw AntigravityQuotaError.permission }
         defer { url.stopAccessingSecurityScopedResource() }
-        if stale {
-            let updated = try url.bookmarkData(options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess],
-                                               includingResourceValuesForKeys: nil, relativeTo: nil)
+        if stale, let updated = try? url.bookmarkData(options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess],
+                                                      includingResourceValuesForKeys: nil, relativeTo: nil) {
             defaults.set(updated, forKey: "googleQuotaFolder")
         }
         guard let directory = AntigravityQuotaReader.directory(in: url) else { throw AntigravityQuotaError.permission }
@@ -417,7 +418,8 @@ final class LocalSources: ObservableObject {
 
     func collect(now: Date) async -> SharedStore.LocalSnapshot? {
         let run = revision
-        var histories: [HistoryProvider:LocalHistory] = [:], issues: [HistoryProvider:String] = [:], status: [HistoryProvider:String] = [:]
+        var histories: [HistoryProvider:LocalHistory] = [:], issues: [HistoryProvider:String] = [:],
+            historyErrors: [HistoryProvider:String] = [:], status: [HistoryProvider:String] = [:]
         for provider in selected {
             guard let data = defaults.data(forKey:bookmarkKey(provider)) else { continue }
             do {
@@ -425,9 +427,9 @@ final class LocalSources: ObservableObject {
                 let url = try URL(resolvingBookmarkData:data, options:[.withSecurityScope,.withoutUI],relativeTo:nil,bookmarkDataIsStale:&stale)
                 guard url.startAccessingSecurityScopedResource() else { throw CocoaError(.fileReadNoPermission) }
                 defer { url.stopAccessingSecurityScopedResource() }
-                if stale {
-                    defaults.set(try url.bookmarkData(options:[.withSecurityScope,.securityScopeAllowOnlyReadAccess],
-                        includingResourceValuesForKeys:nil,relativeTo:nil),forKey:bookmarkKey(provider))
+                if stale, let updated = try? url.bookmarkData(options:[.withSecurityScope,.securityScopeAllowOnlyReadAccess],
+                    includingResourceValuesForKeys:nil,relativeTo:nil) {
+                    defaults.set(updated, forKey:bookmarkKey(provider))
                 }
                 let reading = try await history.scan(provider,at:url,now:now)
                 histories[provider] = reading
@@ -435,7 +437,7 @@ final class LocalSources: ObservableObject {
                     "Connected · \(reading.events.count.formatted()) recorded requests"
             } catch {
                 let message = "History could not be read. Choose the folder again."
-                issues[provider] = message
+                historyErrors[provider] = message
                 status[provider] = message
             }
             guard active && run == revision else { return nil }
@@ -474,9 +476,13 @@ final class LocalSources: ObservableObject {
             }
             connectedLimits[.claude] = desktopWindows
             if enteredDesktopUsage == nil, case .unavailable(let problem) = state { issues[.claude] = problem.rawValue }
-        } else if connectedLimits[.claude] == nil, statusLineEnabled { connectedLimits[.claude] = windows[.claude] ?? [] }
+        } else if connectedLimits[.claude] == nil, statusLineEnabled {
+            connectedLimits[.claude] = windows[.claude] ?? []
+            if let claudeSetupError { issues[.claude] = claudeSetupError }
+        }
         codexHistoryObservedAt = histories[.codex]?.windows.compactMap(\.observedAt).max()
         if messages != status { messages = status }
+        if historyIssues != historyErrors { historyIssues = historyErrors }
         if googleQuotaConnected {
             cancelGoogleQuotaCheck()
             let check = Task { try await readGoogleQuota() }
@@ -499,7 +505,8 @@ final class LocalSources: ObservableObject {
         }
         let prices = self.prices
         let summaries = await Task.detached(priority: .utility) {
-            LocalSummary.build(histories: histories, limits: connectedLimits, issues: issues, prices: prices, now: now)
+            LocalSummary.build(histories: histories, limits: connectedLimits, issues: issues,
+                               historyIssues: historyErrors, prices: prices, now: now)
         }.value
         guard active && run == revision else { return nil }
         return .init(summaries: summaries, hasSources: hasSources)

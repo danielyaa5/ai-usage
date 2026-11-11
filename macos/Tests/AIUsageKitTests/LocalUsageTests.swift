@@ -111,6 +111,28 @@ final class LocalUsageTests: XCTestCase {
         XCTAssertEqual(summaries["today"]?.plans.first?.windows.first?.label,"5-hour")
     }
 
+    func testHistoryFolderErrorDoesNotWarnWhenQuotaIsConnected() {
+        let now = Date()
+        let window = LimitWindow(label: "Weekly", leftPct: 22, resetsAt: now.addingTimeInterval(3600), observedAt: now)
+        let historyError = "History could not be read. Choose the folder again."
+        let quotaIssue = "Couldn’t refresh ChatGPT limits. Check your connection and try Refresh now."
+        let summaries = LocalSummary.build(
+            histories: [:],
+            limits: [.claude: [window], .codex: [window]],
+            issues: [.codex: quotaIssue],
+            historyIssues: [.claude: historyError, .codex: historyError, .antigravity: historyError],
+            prices: nil,
+            now: now
+        )
+        let summary = summaries["7d"]
+        XCTAssertNil(summary?.plan(vendor: "anthropic")?.warning)
+        XCTAssertNil(summary?.plan(vendor: "anthropic")?.warningShort)
+        XCTAssertEqual(summary?.plan(vendor: "openai")?.warning, quotaIssue)
+        XCTAssertEqual(summary?.plan(vendor: "openai")?.warningShort, "Check setup")
+        XCTAssertEqual(summary?.plan(vendor: "google")?.warning, historyError)
+        XCTAssertEqual(summary?.plan(vendor: "google")?.warningShort, "Check setup")
+    }
+
     func testAntigravityMetadataOnly() async throws {
         let folder = root.appendingPathComponent("antigravity/conversations")
         try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true)
