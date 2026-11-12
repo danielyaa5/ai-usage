@@ -5,12 +5,25 @@ import AppKit
 /// Test builds alone embed the original provider-signed executable. The app never handles its tokens.
 enum ClaudeQuotaProcess {
     enum Failure: Error { case helper, timeout, unreadable, signIn }
+    private struct TrackedProcess {
+        let process: Process
+        let identity: SubprocessReaper.Identity?
+    }
+
     private static let processLock = NSLock()
-    private static var activeProcesses = [Int32: Process]()
+    private static var activeProcesses = [Int32: TrackedProcess]()
 
     static func stopAll() {
-        processLock.withLock {
-            for process in activeProcesses.values where process.isRunning { kill(process.processIdentifier, SIGKILL) }
+        let tracked = processLock.withLock { () -> [TrackedProcess] in
+            let values = Array(activeProcesses.values)
+            activeProcesses.removeAll()
+            return values
+        }
+        for entry in tracked {
+            let pid = entry.process.processIdentifier
+            if pid > 0, SubprocessReaper.isAlive(pid: pid, identity: entry.identity) {
+                _ = Darwin.kill(pid, SIGKILL)
+            }
         }
     }
 
@@ -35,7 +48,23 @@ enum ClaudeQuotaProcess {
     }
 
     private static func run(_ operation: Operation, privateProfile: Bool) async throws -> Result {
-        let process = Process(), input = Pipe(), output = Pipe()
+        let hardLimit: Double = operation == .login ? 305 : 30
+        do {
+            return try await BoundedTask.withTimeout(
+                seconds: hardLimit,
+                onTimeout: { Self.stopAll() }
+            ) {
+                try await Self.execute(operation, privateProfile: privateProfile)
+            }
+        } catch is BoundedTask.TimeoutError {
+            throw Failure.timeout
+        }
+    }
+
+    private static func execute(_ operation: Operation, privateProfile: Bool) async throws -> Result {
+        let process = Process()
+        let input = Pipe()
+        let output: Pipe? = operation == .read ? Pipe() : nil
         let executable = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/claude")
         guard FileManager.default.isExecutableFile(atPath: executable.path) else { throw Failure.helper }
         let temporary = FileManager.default.temporaryDirectory
@@ -71,27 +100,41 @@ enum ClaudeQuotaProcess {
         }
         process.environment = env
         process.standardInput = input
-        process.standardOutput = operation == .read ? output : FileHandle.nullDevice
+        process.standardOutput = output ?? FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
+        _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
         try Task.checkCancellation()
         try process.run()
-        processLock.withLock { activeProcesses[process.processIdentifier] = process }
+        let pid = process.processIdentifier
+        let identity = SubprocessReaper.Identity(pid: pid)
+        processLock.withLock {
+            activeProcesses[pid] = TrackedProcess(process: process, identity: identity)
+        }
         defer {
-            _ = processLock.withLock { activeProcesses.removeValue(forKey: process.processIdentifier) }
-            try? input.fileHandleForWriting.close()
-            if process.isRunning { kill(process.processIdentifier, SIGKILL) }
-            process.waitUntilExit()
+            _ = processLock.withLock { activeProcesses.removeValue(forKey: pid) }
+            SubprocessReaper.reapInBackground(
+                process: process,
+                identity: identity,
+                stdin: input,
+                stdout: output
+            )
         }
         let deadline = ContinuousClock.now.advanced(by: operation == .login ? .seconds(300) : .seconds(25))
         if operation != .read {
             // Claude handles its own browser callback and account state. Only its exit code is needed.
-            while process.isRunning {
+            try? input.fileHandleForWriting.close()
+            while SubprocessReaper.isProcessRunning(process, identity: identity) {
                 try Task.checkCancellation()
                 if ContinuousClock.now >= deadline { throw Failure.timeout }
                 try await Task.sleep(for: .milliseconds(150))
             }
+            for _ in 0..<10 where process.isRunning {
+                await SubprocessReaper.uncancelledSleep(milliseconds: 10)
+            }
+            guard !process.isRunning else { throw Failure.unreadable }
             return Result(status: process.terminationStatus)
         }
+        guard let output else { throw Failure.unreadable }
         let request: [String: Any] = ["type": "control_request", "request_id": id,
                                       "request": ["subtype": "get_usage", "skip_behaviors": true]]
         let data = try JSONSerialization.data(withJSONObject: request) + Data([10])
@@ -116,12 +159,16 @@ enum ClaudeQuotaProcess {
                 continue
             }
             if count == 0 {
-                if !process.isRunning { break }
-                try await Task.sleep(for: .milliseconds(50))
-                continue
+                break
             }
             if errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR { throw Failure.unreadable }
+            if !SubprocessReaper.isProcessRunning(process, identity: identity) {
+                break
+            }
             try await Task.sleep(for: .milliseconds(100))
+        }
+        for _ in 0..<10 where process.isRunning && !SubprocessReaper.isAlive(pid: pid, identity: identity) {
+            await SubprocessReaper.uncancelledSleep(milliseconds: 10)
         }
         guard !process.isRunning else { throw Failure.unreadable }
         return Result(status: process.terminationStatus)

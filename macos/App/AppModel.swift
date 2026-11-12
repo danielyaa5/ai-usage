@@ -102,8 +102,13 @@ final class AppModel: ObservableObject {
 
     /// How often the dashboard is read while it answers. Failures back off to 30 minutes.
     static let interval: TimeInterval = 5 * 60
+    /// Hard ceiling before an unresponsive refresh cycle is abandoned so periodic polling can never wedge.
+    static let maxRefreshDuration: TimeInterval = 150
 
     private var timer: Timer?
+    private var refreshTask: Task<Void, Never>?
+    private var refreshStartedAt: Date?
+    private var refreshWatchdog: Timer?
     private var failures = 0
     /// Bumped when the address changes, so a read of the old address that finishes late is dropped.
     private var generation = 0
@@ -169,17 +174,60 @@ final class AppModel: ObservableObject {
         if userInitiated {
             SharedStore.markRefreshing()
         }
-        guard !refreshing else {
-            refreshAgain = true
-            if userInitiated {
-                reloadWidgets()
+        if refreshing {
+            if let started = refreshStartedAt, Date().timeIntervalSince(started) >= Self.maxRefreshDuration {
+                recoverStuckRefresh()
+            } else {
+                refreshAgain = true
+                if userInitiated {
+                    reloadWidgets()
+                }
+                return
             }
-            return
         }
         refreshing = true
+        refreshStartedAt = Date()
         timer?.invalidate()
         let run = generation
-        Task { await self.readAll(run: run) }
+        armRefreshWatchdog(run: run)
+        refreshTask = Task { await self.readAll(run: run) }
+    }
+
+    private func armRefreshWatchdog(run: Int) {
+        refreshWatchdog?.invalidate()
+        let watchdog = Timer(timeInterval: Self.maxRefreshDuration, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.refreshing, self.generation == run else { return }
+                let retryNow = self.refreshAgain
+                let wasMarked = SharedStore.isRefreshing()
+                self.recoverStuckRefresh()
+                if retryNow {
+                    self.refreshAgain = false
+                    self.refresh(userInitiated: wasMarked)
+                } else {
+                    self.schedule()
+                }
+            }
+        }
+        watchdog.tolerance = 5
+        RunLoop.main.add(watchdog, forMode: .common)
+        refreshWatchdog = watchdog
+    }
+
+    private func recoverStuckRefresh() {
+        refreshWatchdog?.invalidate()
+        refreshWatchdog = nil
+        refreshTask?.cancel()
+        refreshTask = nil
+        local.cancelHungChecks()
+        generation += 1
+        refreshing = false
+        refreshStartedAt = nil
+        failures += 1
+        if SharedStore.isRefreshing() && !refreshAgain {
+            SharedStore.clearRefreshing()
+            reloadWidgets()
+        }
     }
 
     private func readAll(run: Int) async {
@@ -187,7 +235,22 @@ final class AppModel: ObservableObject {
             options: .userInitiatedAllowingIdleSystemSleep,
             reason: "Refresh AI Usage"
         )
-        defer { ProcessInfo.processInfo.endActivity(activity) }
+        defer {
+            ProcessInfo.processInfo.endActivity(activity)
+            if run == generation {
+                refreshWatchdog?.invalidate()
+                refreshWatchdog = nil
+                refreshTask = nil
+                refreshStartedAt = nil
+                if refreshing {
+                    refreshing = false
+                    if SharedStore.isRefreshing() && !refreshAgain {
+                        SharedStore.clearRefreshing()
+                    }
+                    schedule()
+                }
+            }
+        }
 
         let now = Date()
         let revision = local.revision
@@ -284,6 +347,10 @@ final class AppModel: ObservableObject {
     /// The connected sources changed while their reading was in flight. Read the new set without
     /// publishing the interrupted result or replacing the app's preview with an empty entry.
     private func restartLocalRead(userInitiated: Bool = false) {
+        refreshWatchdog?.invalidate()
+        refreshWatchdog = nil
+        refreshTask = nil
+        refreshStartedAt = nil
         refreshing = false
         refreshAgain = false
         refresh(userInitiated: userInitiated || SharedStore.isRefreshing())
@@ -351,6 +418,11 @@ final class AppModel: ObservableObject {
         server = url
         local.activate(value == .local)
         refreshAgain = false
+        refreshWatchdog?.invalidate()
+        refreshWatchdog = nil
+        refreshTask?.cancel()
+        refreshTask = nil
+        refreshStartedAt = nil
         generation += 1
         readings = [:]
         shown = nil

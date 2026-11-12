@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// Runs the bundled `codex app-server` and talks to it the way the dashboard's
@@ -138,33 +139,52 @@ final class CodexClient: @unchecked Sendable {
         }
     }
 
+    private static func uncancelledSleep(milliseconds: Int) async {
+        guard milliseconds > 0 else { return }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            DispatchQueue.global(qos: .utility).asyncAfter(
+                deadline: .now() + .milliseconds(milliseconds)
+            ) {
+                continuation.resume()
+            }
+        }
+    }
+
+    private var isProcessAlive: Bool {
+        let currentPID = process.processIdentifier
+        guard currentPID > 0, process.isRunning else { return false }
+        return Darwin.kill(currentPID, 0) == 0 || errno == EPERM
+    }
+
     /// Closes stdin (app-server exits at the end of its input), then asks it to stop, then makes it.
     func stop() async -> Stopped {
         let began = Date()
         var when = "when its input closed"
         try? input.fileHandleForWriting.close()
-        for _ in 0..<30 where process.isRunning {
-            try? await Task.sleep(nanoseconds: 100_000_000)
+        for _ in 0..<30 where isProcessAlive {
+            await Self.uncancelledSleep(milliseconds: 100)
         }
-        if process.isRunning {
+        if isProcessAlive {
             when = "after SIGTERM"
             process.terminate()
-            for _ in 0..<20 where process.isRunning {
-                try? await Task.sleep(nanoseconds: 100_000_000)
+            for _ in 0..<20 where isProcessAlive {
+                await Self.uncancelledSleep(milliseconds: 100)
             }
         }
-        if process.isRunning {
+        if isProcessAlive {
             when = "after SIGKILL"
-            kill(process.processIdentifier, SIGKILL)
-            for _ in 0..<10 where process.isRunning {
-                try? await Task.sleep(nanoseconds: 100_000_000)
+            _ = Darwin.kill(process.processIdentifier, SIGKILL)
+            for _ in 0..<10 where isProcessAlive {
+                await Self.uncancelledSleep(milliseconds: 100)
             }
         }
         let seconds = Date().timeIntervalSince(began)
         // Let the last lines Codex wrote arrive before the readers go.
-        try? await Task.sleep(nanoseconds: 300_000_000)
+        await Self.uncancelledSleep(milliseconds: 300)
         output.fileHandleForReading.readabilityHandler = nil
         errors.fileHandleForReading.readabilityHandler = nil
+        try? output.fileHandleForReading.close()
+        try? errors.fileHandleForReading.close()
         guard !process.isRunning else { return Stopped(when: "not at all", exit: nil, seconds: seconds) }
         let how = process.terminationReason == .uncaughtSignal ? "signal" : "status"
         return Stopped(when: when, exit: "\(how) \(process.terminationStatus)", seconds: seconds)

@@ -295,6 +295,13 @@ final class LocalSources: ObservableObject {
         googleQuotaCheck = nil
     }
 
+    func cancelHungChecks() {
+        cancelGoogleQuotaCheck()
+        #if CLAUDE_QUOTA_TEST
+        claudeLive.cancelStuckRead()
+        #endif
+    }
+
     private func readGoogleQuota() async throws -> [LimitWindow] {
         try Task.checkCancellation()
         guard let data = defaults.data(forKey: "googleQuotaFolder") else { throw AntigravityQuotaError.permission }

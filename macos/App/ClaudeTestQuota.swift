@@ -79,9 +79,19 @@ final class ClaudeTestQuota: ObservableObject {
         login?.cancel()
         reading = nil
         login = nil
+        ClaudeQuotaProcess.stopAll()
         lastCheck = nil
         loginOnMissing = false
         if enabled { state = .checking }
+    }
+
+    func cancelStuckRead() {
+        guard reading != nil else { return }
+        generation += 1
+        reading?.cancel()
+        reading = nil
+        ClaudeQuotaProcess.stopAll()
+        if enabled && login == nil { state = .failed }
     }
 
     func refreshNow() {
