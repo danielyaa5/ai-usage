@@ -197,9 +197,9 @@ func percentSlot(size: CGFloat) -> CGFloat {
 
 /// Room for the longest time to a reset among `windows` ("15h 58m", "reset due"), so every cell of a
 /// table gets the same slot and the bars line up.
-func untilSlot(_ windows: [LimitWindow], now: Date, size: CGFloat = 9.5) -> CGFloat {
+func untilSlot(_ windows: [LimitWindow], now: Date, size: CGFloat = 10) -> CGFloat {
     let widest = windows.map { textWidth($0.untilReset(now: now), size: size, digits: true) }.max() ?? 0
-    return min(50, max(30, widest + 1))
+    return min(54, max(32, widest + 1))
 }
 
 /// Which plans' limit readings are more than six hours old, for the medium widget's last line; nil
@@ -212,7 +212,7 @@ func staleLimitsText(_ plans: [Plan], now: Date, width: CGFloat) -> String? {
     guard let first = stale.first else { return nil }
     if stale.count == 1 { return "\(first.name) limits as of \(first.ago)" }
     let long = stale.map { "\($0.name) as of \($0.ago)" }.joined(separator: " · ")
-    if textWidth(long, size: 9.5, weight: .medium) <= width - 16 { return long }
+    if textWidth(long, size: 10, weight: .medium) <= width - 16 { return long }
     return "Old limit readings: " + stale.map { $0.name }.joined(separator: ", ")
 }
 
@@ -262,6 +262,7 @@ struct WindowRow: View {
 struct CaptionText: View {
     var window: LimitWindow
     var now: Date
+    var size: CGFloat = 10.5
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
@@ -271,7 +272,7 @@ struct CaptionText: View {
                 Text(text).lineLimit(1)
             }
         }
-        .font(.system(size: 9.5))
+        .font(.system(size: size))
         .foregroundStyle(window.isOld(now: now) ? palette.stale : palette.muted)
     }
 }
@@ -357,7 +358,7 @@ struct FreshnessNote: View {
     private func label(_ note: String) -> some View {
         let icon = (note == "Refreshing…" || entry.error == nil) ? "arrow.clockwise" : "wifi.exclamationmark"
         return Label(note, systemImage: icon)
-            .font(.system(size: 9.5, weight: .medium))
+            .font(.system(size: 10.5, weight: .medium))
             .foregroundStyle(Palette(scheme: scheme).stale)
             .lineLimit(1)
             .minimumScaleFactor(0.8)
@@ -378,7 +379,7 @@ struct WarningLines: View {
                 Image(systemName: "exclamationmark.triangle.fill")
                 Text(text)
             }
-            .font(.system(size: 9.5))
+            .font(.system(size: 10))
             .foregroundStyle(Palette(scheme: scheme).text(.warning))
             .lineLimit(lines)
         }
@@ -390,9 +391,9 @@ struct WarningLines: View {
         // Wrapped lines don't fill to the edge, so a second line counts for less.
         let room = (width - 16) * (lines > 1 ? CGFloat(lines) * 0.85 : 1)
         let full = warned.compactMap { $0.warning }.joined(separator: " · ")
-        if textWidth(full, size: 9.5) <= room { return full }
+        if textWidth(full, size: 10) <= room { return full }
         let short = warned.map { "\($0.short): \($0.warningPhrase ?? "")" }.joined(separator: " · ")
-        if textWidth(short, size: 9.5) <= room { return short }
+        if textWidth(short, size: 10) <= room { return short }
         return "Problems reading limits: " + warned.map { $0.short }.joined(separator: ", ")
     }
 }
@@ -411,7 +412,7 @@ struct WarningText: View {
             HStack(alignment: .firstTextBaseline, spacing: 3) {
                 Image(systemName: "exclamationmark.triangle.fill")
                 if let width = oneLine {
-                    Text(textWidth(warning, size: 9.5, weight: .medium) <= width - 16
+                    Text(textWidth(warning, size: 10, weight: .medium) <= width - 16
                          ? warning : (plan.warningPhrase ?? warning).capitalizedFirst)
                         .lineLimit(1)
                         .minimumScaleFactor(0.85)
@@ -421,7 +422,7 @@ struct WarningText: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            .font(.system(size: 9.5, weight: .medium))
+            .font(.system(size: 10, weight: .medium))
             .foregroundStyle(Palette(scheme: scheme).text(.warning))
         }
     }
@@ -437,7 +438,7 @@ struct AgeLine: View {
             Image(systemName: "clock")
             Text(text)
         }
-        .font(.system(size: 9.5, weight: .medium))
+        .font(.system(size: 10, weight: .medium))
         .foregroundStyle(Palette(scheme: scheme).stale)
         .lineLimit(1)
         .minimumScaleFactor(0.85)
@@ -465,27 +466,27 @@ struct UnavailableView: View {
                 .font(.system(size: 20))
                 .foregroundStyle(palette.muted)
             Text(entry.server == SharedStore.localURL ? localCopy.title : "Can't reach AI Usage")
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(palette.primary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.85)
             Text(entry.server == SharedStore.localURL ? "This Mac" : hostAndPort(entry.server))
-                .font(.system(size: 10).monospaced())
+                .font(.system(size: 11).monospaced())
                 .foregroundStyle(palette.secondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
             Text(entry.server == SharedStore.localURL ? localCopy.detail : "Click to check the dashboard address in AI Usage.")
-                .font(.system(size: 10))
+                .font(.system(size: 10.5))
                 .foregroundStyle(palette.muted)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
             if entry.server == SharedStore.localURL {
                 Link(destination: localCopy.link.url) {
-                    Label(localCopy.action, systemImage: "arrow.up.forward").font(.system(size: 10, weight: .medium))
+                    Label(localCopy.action, systemImage: "arrow.up.forward").font(.system(size: 10.5, weight: .medium))
                 }
             } else { Button(intent: RefreshUsageIntent()) {
                 Label("Try again", systemImage: "arrow.clockwise")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: 10.5, weight: .medium))
             }
             .buttonStyle(.bordered)
             .controlSize(.small) }
@@ -508,19 +509,19 @@ struct WidgetHeader: View {
         let palette = Palette(scheme: scheme)
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text(title)
-                .font(.system(size: 13, weight: .bold))
+                .font(.system(size: 15, weight: .bold))
                 .foregroundStyle(palette.primary)
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
                 .layoutPriority(2)
             if let host = entry.summary?.host {
-                Text(host).font(.system(size: 10)).foregroundStyle(palette.muted).lineLimit(1)
+                Text(host).font(.system(size: 11.5)).foregroundStyle(palette.muted).lineLimit(1)
             }
             Spacer(minLength: 4)
             if entry.freshnessNote != nil {
                 FreshnessNote(entry: entry).layoutPriority(1)
             } else if let at = entry.fetchedAt ?? entry.summary?.generatedAt {
-                Text(at, style: .time).font(.system(size: 10)).foregroundStyle(palette.muted).fixedSize()
+                Text(at, style: .time).font(.system(size: 11.5)).foregroundStyle(palette.muted).fixedSize()
             }
         }
     }
@@ -573,27 +574,31 @@ struct LimitsTable: View {
     var heading = true
     @Environment(\.colorScheme) private var scheme
 
-    private var titleSize: CGFloat { roomy ? 12 : 11 }
+    private var titleSize: CGFloat { roomy ? 14 : 13 }
     private var corner: String {
         guard !roomy else { return "" }
         let windows = plans.flatMap(\.windows)
         if windows.contains(where: { $0.resetsAt == nil }) {
-            return windows.allSatisfy { $0.resetsAt == nil } ? "% left · last read" : "% left"
+            return windows.allSatisfy { $0.resetsAt == nil } ? "% · read" : "%"
         }
-        return "% left · resets in"
+        return "% · resets"
     }
 
     /// Wide enough for the longest label, so no label is cut and the limit columns share the rest.
     private var labelWidth: CGFloat {
-        let limit = width * (fullTitles ? 0.4 : 0.34)
-        let indent = titleSize * 0.66 + 5
+        let limit = width * (fullTitles ? 0.42 : 0.38)
+        let indent = titleSize * 0.66 + 6
         let widths = limitRows(plans).map { row -> CGFloat in
             switch row.kind {
-            case .group: return indent + textWidth(row.name ?? "", size: titleSize - 1)
+            case .group:
+                let raw = row.name ?? ""
+                let short = raw.replacingOccurrences(of: " and ", with: " & ")
+                return indent + min(textWidth(raw, size: titleSize - 1.5, weight: .medium),
+                                    textWidth(short, size: titleSize - 1.5, weight: .medium))
             case .plan, .heading: return PlanTitle.width(row.plan, full: fullTitles, size: titleSize, limit: limit)
             }
         }
-        return min(limit, (widths + [heading ? textWidth(corner, size: 9) : 0]).max() ?? 0) + 2
+        return min(limit, (widths + [heading ? textWidth(corner, size: 10) : 0]).max() ?? 0) + 2
     }
 
     var body: some View {
@@ -601,17 +606,17 @@ struct LimitsTable: View {
         let columns = limitColumns(plans)
         let labelWidth = self.labelWidth
         let untilWidth = untilSlot(plans.flatMap(\.windows), now: now)
-        Grid(alignment: .leading, horizontalSpacing: roomy ? 12 : 8, verticalSpacing: rowSpacing ?? (roomy ? 8 : 7)) {
+        Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: rowSpacing ?? (roomy ? 5 : 4)) {
             if heading {
                 GridRow {
                     Text(corner)
-                        .font(.system(size: 9))
+                        .font(.system(size: 10))
                         .foregroundStyle(palette.muted)
                         .lineLimit(1)
                         .frame(width: labelWidth, alignment: .leading)
                     ForEach(columns, id: \.self) { column in
                         Text(column)
-                            .font(.system(size: 9, weight: .semibold))
+                            .font(.system(size: 10.5, weight: .semibold))
                             .foregroundStyle(palette.muted)
                             .lineLimit(1)
                     }
@@ -632,7 +637,7 @@ struct LimitsTable: View {
     private func cells(_ row: LimitRow, columns: [String], untilWidth: CGFloat, palette: Palette) -> some View {
         if row.kind == .plan && row.windows.isEmpty {
             Text("No reading yet")
-                .font(.system(size: 10))
+                .font(.system(size: 11))
                 .foregroundStyle(palette.muted)
                 .gridCellColumns(max(1, columns.count))
         } else {
@@ -645,11 +650,10 @@ struct LimitsTable: View {
     @ViewBuilder
     private func cell(_ window: LimitWindow?, untilWidth: CGFloat) -> some View {
         if let window {
-            if roomy {
-                StackedCell(window: window, now: now)
-            } else {
-                InlineCell(window: window, now: now, percentWidth: percentSlot(size: 11), untilWidth: untilWidth)
-            }
+            CompactBarCell(window: window, now: now,
+                           percentSize: roomy ? 15 : 13,
+                           untilSize: roomy ? 10 : 9.5,
+                           barHeight: roomy ? 5.5 : 4.5)
         } else {
             Color.clear.frame(width: 0, height: 0)
         }
@@ -658,14 +662,59 @@ struct LimitsTable: View {
     @ViewBuilder
     private func label(_ row: LimitRow, palette: Palette) -> some View {
         if row.kind == .group {
-            Text(row.name ?? "")
-                .font(.system(size: titleSize - 1))
-                .foregroundStyle(palette.secondary)
-                .lineLimit(1)
-                .padding(.leading, titleSize * 0.66 + 5)
+            let name = row.name ?? ""
+            ViewThatFits(in: .horizontal) {
+                Text(name)
+                Text(name.replacingOccurrences(of: " and ", with: " & "))
+            }
+            .font(.system(size: titleSize - 1.5, weight: .medium))
+            .foregroundStyle(palette.secondary)
+            .lineLimit(1)
+            .padding(.leading, titleSize * 0.66 + 6)
         } else {
             PlanTitle(plan: row.plan, full: fullTitles, size: titleSize)
         }
+    }
+}
+
+/// A compact 2-line cell: percent left and reset countdown on the top line, with a full-width
+/// meter bar below. Frees vertical height while keeping hero typography.
+struct CompactBarCell: View {
+    var window: LimitWindow
+    var now: Date
+    var percentSize: CGFloat = 15
+    var untilSize: CGFloat = 10
+    var barHeight: CGFloat = 5.5
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        let palette = Palette(scheme: scheme)
+        let old = window.isOld(now: now)
+        let status = window.status
+        let until = window.untilReset(now: now)
+        let color = old ? palette.muted : status == .good ? palette.primary : palette.text(status)
+
+        VStack(alignment: .leading, spacing: 2.5) {
+            HStack(alignment: .firstTextBaseline, spacing: 2) {
+                Text(Format.percent(window.leftPct))
+                    .font(.system(size: percentSize, weight: .bold))
+                    .monospacedDigit()
+                    .foregroundStyle(color)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                Spacer(minLength: 2)
+                if !until.isEmpty {
+                    Text(until)
+                        .font(.system(size: untilSize, weight: .medium))
+                        .monospacedDigit()
+                        .foregroundStyle(old ? palette.stale : palette.muted)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                }
+            }
+            MeterBar(left: window.leftPct, level: window.status, height: barHeight, dim: old)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -675,9 +724,9 @@ struct LimitsTable: View {
 struct InlineCell: View {
     var window: LimitWindow
     var now: Date
-    var size: CGFloat = 11
+    var size: CGFloat = 12.5
     var percentWidth: CGFloat
-    var untilWidth: CGFloat = 42
+    var untilWidth: CGFloat = 46
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
@@ -688,10 +737,10 @@ struct InlineCell: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
                 .frame(width: percentWidth, alignment: .trailing)
-            MeterBar(left: window.leftPct, level: window.status, height: 4, dim: old)
-                .frame(minWidth: 14)
+            MeterBar(left: window.leftPct, level: window.status, height: 5, dim: old)
+                .frame(minWidth: 16)
             Text(window.untilReset(now: now))
-                .font(.system(size: 9.5))
+                .font(.system(size: 10))
                 .monospacedDigit()
                 .foregroundStyle(old ? palette.stale : palette.muted)
                 .lineLimit(1)
@@ -707,10 +756,10 @@ struct StackedCell: View {
     var now: Date
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            PercentLeft(window: window, now: now, size: 12, left: true)
-            MeterBar(left: window.leftPct, level: window.status, dim: window.isOld(now: now))
-            CaptionText(window: window, now: now)
+        VStack(alignment: .leading, spacing: 2) {
+            PercentLeft(window: window, now: now, size: 13.5, left: true)
+            MeterBar(left: window.leftPct, level: window.status, height: 5, dim: window.isOld(now: now))
+            CaptionText(window: window, now: now, size: 10)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -759,12 +808,11 @@ struct AllPlansSmall: View {
     private func layout(captions: Bool) -> some View {
         let palette = Palette(scheme: scheme)
         let note = entry.freshnessNote != nil
-        let fit = titleFit(warningIcon: !captions)
+        let size = titleSize(warningIcon: !captions)
         let long = longCaptions()
-        return VStack(alignment: .leading, spacing: note ? 4 : 6) {
+        return VStack(alignment: .leading, spacing: note ? 2 : 2.5) {
             ForEach(entry.plans) { plan in
-                row(plan, captions: captions, titleSize: fit.size, left: fit.left.contains(plan.id), long: long,
-                    palette: palette)
+                row(plan, captions: captions, titleSize: size, long: long, palette: palette)
             }
             Spacer(minLength: 0)
             if note {
@@ -774,16 +822,16 @@ struct AllPlansSmall: View {
     }
 
     @ViewBuilder
-    private func row(_ plan: Plan, captions: Bool, titleSize: CGFloat, left: Bool, long: Bool,
+    private func row(_ plan: Plan, captions: Bool, titleSize: CGFloat, long: Bool,
                      palette: Palette) -> some View {
         if let window = plan.firstToRunOut(now: entry.date) {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 1) {
                 HStack(alignment: .firstTextBaseline, spacing: 0) {
                     PlanTitle(plan: plan, size: titleSize, warningIcon: !captions)
                     Spacer(minLength: Self.gap)
-                    PercentLeft(window: window, now: entry.date, size: 12, left: left, icons: false)
+                    PercentLeft(window: window, now: entry.date, size: 13.5, left: false, icons: false)
                 }
-                MeterBar(left: window.leftPct, level: window.status, dim: window.isOld(now: entry.date))
+                MeterBar(left: window.leftPct, level: window.status, height: 5, dim: window.isOld(now: entry.date))
                 if captions {
                     caption(plan, window, long: long, palette: palette)
                 }
@@ -792,7 +840,7 @@ struct AllPlansSmall: View {
             HStack(alignment: .firstTextBaseline, spacing: 0) {
                 PlanTitle(plan: plan, size: titleSize)
                 Spacer(minLength: Self.gap)
-                Text(entry.server == SharedStore.localURL && plan.requests > 0 ? "\(plan.requests.formatted()) req" : "no reading").font(.system(size: 10)).foregroundStyle(palette.muted)
+                Text(entry.server == SharedStore.localURL && plan.requests > 0 ? "\(plan.requests.formatted()) req" : "no reading").font(.system(size: 10.5)).foregroundStyle(palette.muted)
             }
         }
     }
@@ -805,7 +853,7 @@ struct AllPlansSmall: View {
             iconLine("clock", "\(window.name) · \(oldNote(window))", color: palette.stale)
         } else {
             Text(plainCaption(window, long: long))
-                .font(.system(size: 9.5))
+                .font(.system(size: 10))
                 .foregroundStyle(palette.muted)
                 .lineLimit(1)
         }
@@ -816,7 +864,7 @@ struct AllPlansSmall: View {
             Image(systemName: symbol)
             Text(text)
         }
-        .font(.system(size: 9.5))
+        .font(.system(size: 10))
         .foregroundStyle(color)
         .lineLimit(1)
         .minimumScaleFactor(0.85)
@@ -842,40 +890,28 @@ struct AllPlansSmall: View {
             guard let window = plan.firstToRunOut(now: entry.date), plan.warning == nil, !window.isOld(now: entry.date) else {
                 return true
             }
-            return textWidth(plainCaption(window, long: true), size: 9.5) <= width
+            return textWidth(plainCaption(window, long: true), size: 10) <= width
         }
     }
 
     /// The least room between a plan's name and its percent.
     private static let gap: CGFloat = 6
 
-    /// One title size for every row, and the rows with room for " left" after their percents.
-    private struct TitleFit {
-        var size: CGFloat
-        var left: Set<Plan.ID>
-    }
-
-    /// Every title at 12 points with " left" after each percent when all of them fit, else at 11. When
-    /// even 11 is too wide (a long name beside "100%", or a problem's triangle beside "Antigravity"),
-    /// the largest size at which every row fits without " left" (12, 11 or 10 points), with " left" on
-    /// the rows that still have room. Each row is measured with the percent it shows.
-    private func titleFit(warningIcon: Bool) -> TitleFit {
-        func fits(_ plan: Plan, size: CGFloat, left: Bool) -> Bool {
+    /// One title size for every row: the largest at which every plan's name fits beside its percent.
+    private func titleSize(warningIcon: Bool) -> CGFloat {
+        func fits(_ plan: Plan, size: CGFloat) -> Bool {
             guard let window = plan.firstToRunOut(now: entry.date) else {
-                // A plan with no reading shows its problem's triangle: it has no caption to say what's wrong.
-                return PlanTitle.width(plan, size: size) + Self.gap + textWidth("no reading", size: 10) <= width
+                let fallback = entry.server == SharedStore.localURL && plan.requests > 0
+                    ? "\(plan.requests.formatted()) req" : "no reading"
+                return PlanTitle.width(plan, size: size) + Self.gap + textWidth(fallback, size: 10.5) <= width
             }
-            let percent = percentWidth(Format.percent(window.leftPct), size: 12, left: left)
+            let percent = percentWidth(Format.percent(window.leftPct), size: 13.5, left: false)
             return PlanTitle.width(plan, size: size, warningIcon: warningIcon) + Self.gap + percent <= width
         }
-        let every = Set(entry.plans.map(\.id))
-        for size: CGFloat in [12, 11] where entry.plans.allSatisfy({ fits($0, size: size, left: true) }) {
-            return TitleFit(size: size, left: every)
+        for size: CGFloat in [14, 13, 12, 11] where entry.plans.allSatisfy({ fits($0, size: size) }) {
+            return size
         }
-        for size: CGFloat in [12, 11, 10] where entry.plans.allSatisfy({ fits($0, size: size, left: false) }) {
-            return TitleFit(size: size, left: Set(entry.plans.filter { fits($0, size: size, left: true) }.map(\.id)))
-        }
-        return TitleFit(size: 10, left: [])
+        return 11
     }
 }
 
@@ -1112,21 +1148,15 @@ struct AllPlansLarge: View {
     @Environment(\.widgetContentSize) private var measured
 
     var body: some View {
-        // A Mac's large widget has about 308 points of height inside its margins, which the table with
-        // reset times, two lines of reader problems and the totals can overrun. Then the problems take
-        // one line, the extra large's totals lose their hints, then the totals go (the totals widget has
-        // them), then the reset times.
         ViewThatFits(in: .vertical) {
             if family == .systemExtraLarge {
                 layout(warningLines: 1, totals: .full, captions: true)
             } else {
-                layout(warningLines: 2, totals: .compact, captions: true)
+                layout(warningLines: 2, totals: .compact, captions: true, rowSpacing: 5)
             }
-            layout(warningLines: 1, totals: .compact, captions: true)
             layout(warningLines: 1, totals: .compact, captions: true, rowSpacing: 4)
-            layout(warningLines: 1, totals: .compact, captions: false)
+            layout(warningLines: 1, totals: .compact, captions: true, rowSpacing: 3)
             layout(warningLines: 1, totals: nil, captions: true)
-            layout(warningLines: 1, totals: nil, captions: false)
         }
     }
 
@@ -1136,13 +1166,13 @@ struct AllPlansLarge: View {
         let wide = family == .systemExtraLarge
         let width = measured?.width ?? PreviewSize.content(family).width
         return VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 9) {
+            VStack(alignment: .leading, spacing: 8) {
                 WidgetHeader(entry: entry, title: "AI plan limits")
                 LimitsTable(plans: entry.plans, now: entry.date, width: width,
                             roomy: captions, fullTitles: wide, rowSpacing: rowSpacing)
                 WarningLines(plans: entry.plans, width: width, lines: warningLines)
             }
-            Spacer(minLength: 8)
+            Spacer(minLength: 6)
             if let totals, let summary = entry.summary, summary.hasHistory != false {
                 TotalsSection(summary: summary, compact: totals == .compact)
             }
@@ -1202,10 +1232,10 @@ struct TotalsSection: View {
 
     var body: some View {
         let palette = Palette(scheme: scheme)
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 3) {
             Divider().overlay(palette.divider)
             Text(summary.rangeLabel)
-                .font(.system(size: 9, weight: .semibold))
+                .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(palette.muted)
             TotalsRow(summary: summary, compact: compact)
         }
@@ -1223,12 +1253,12 @@ struct TotalsRow: View {
             ForEach(stats(summary)) { stat in
                 VStack(alignment: .leading, spacing: 1) {
                     StatLabel(stat: stat, short: compact)
-                        .font(.system(size: 9)).foregroundStyle(palette.muted)
+                        .font(.system(size: 10.5, weight: .medium)).foregroundStyle(palette.muted)
                     Text(stat.value)
-                        .font(.system(size: compact ? 14 : 17, weight: .bold)).monospacedDigit()
+                        .font(.system(size: compact ? 17.5 : 19, weight: .bold)).monospacedDigit()
                         .foregroundStyle(palette.primary).lineLimit(1).minimumScaleFactor(0.7)
                     if !compact {
-                        Text(stat.hint).font(.system(size: 9)).foregroundStyle(palette.muted)
+                        Text(stat.hint).font(.system(size: 10)).foregroundStyle(palette.muted)
                             .lineLimit(1).minimumScaleFactor(0.8)
                     }
                 }
@@ -1260,11 +1290,11 @@ struct UsageWidgetView: View {
             let all = stats(summary)
             if family == .systemSmall {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("API-equivalent value").font(.system(size: 10)).foregroundStyle(palette.muted)
+                    Text("API-equivalent value").font(.system(size: 11)).foregroundStyle(palette.muted)
                     Text(all[0].value)
-                        .font(.system(size: 26, weight: .bold)).monospacedDigit()
+                        .font(.system(size: 28, weight: .bold)).monospacedDigit()
                         .foregroundStyle(palette.primary).lineLimit(1).minimumScaleFactor(0.6)
-                    Text(summary.rangeLabel).font(.system(size: 10)).foregroundStyle(palette.muted)
+                    Text(summary.rangeLabel).font(.system(size: 11)).foregroundStyle(palette.muted)
                     Spacer(minLength: 4)
                     ForEach(all.dropFirst()) { stat in
                         HStack(alignment: .firstTextBaseline) {
@@ -1273,7 +1303,7 @@ struct UsageWidgetView: View {
                             Text(stat.value).fontWeight(.semibold).monospacedDigit().foregroundStyle(palette.primary)
                                 .fixedSize()
                         }
-                        .font(.system(size: 11))
+                        .font(.system(size: 12))
                     }
                     if entry.freshnessNote != nil {
                         FreshnessNote(entry: entry).padding(.top, 3)
@@ -1298,11 +1328,11 @@ struct UsageWidgetView: View {
                       alignment: .leading, spacing: 8) {
                 ForEach(all) { stat in
                     VStack(alignment: .leading, spacing: 1) {
-                        StatLabel(stat: stat).font(.system(size: 9.5)).foregroundStyle(palette.muted)
-                        Text(stat.value).font(.system(size: 19, weight: .bold)).monospacedDigit()
+                        StatLabel(stat: stat).font(.system(size: 10.5)).foregroundStyle(palette.muted)
+                        Text(stat.value).font(.system(size: 21, weight: .bold)).monospacedDigit()
                             .foregroundStyle(palette.primary).lineLimit(1).minimumScaleFactor(0.6)
                         if hints {
-                            Text(stat.hint).font(.system(size: 9)).foregroundStyle(palette.muted)
+                            Text(stat.hint).font(.system(size: 9.5)).foregroundStyle(palette.muted)
                                 .lineLimit(1).minimumScaleFactor(0.8)
                         }
                     }
