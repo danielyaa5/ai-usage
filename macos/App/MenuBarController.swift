@@ -6,7 +6,7 @@ import AIUsageKit
 extension AppModel {
     func menuBarMeters(at now: Date) -> [MenuBarMeter] {
         HistoryProvider.allCases.filter(meterProviders.contains).map {
-            MenuBarMeter(provider: $0, percent: limits?.menuBarQuota(for: $0, at: now))
+            limits?.menuBarMeter(for: $0, at: now) ?? MenuBarMeter(provider: $0, remainingPct: nil)
         }
     }
 }
@@ -17,6 +17,7 @@ final class MenuBarController: NSObject {
     private var item: NSStatusItem?
     private let popover = NSPopover()
     private var subscriptions: Set<AnyCancellable> = []
+    private var lastMeters: [MenuBarMeter]?
     private var lastDescription: String?
     private var lastDark: Bool?
     private var appearanceObservation: NSKeyValueObservation?
@@ -41,7 +42,9 @@ final class MenuBarController: NSObject {
                 appearanceObservation = nil
                 NSStatusBar.system.removeStatusItem(item)
                 self.item = nil
+                lastMeters = nil
                 lastDescription = nil
+                lastDark = nil
             }
             return
         }
@@ -59,7 +62,8 @@ final class MenuBarController: NSObject {
         let description = MenuBarSymbol(meters: meters, sample: model.source == .demo).description
         guard let button = item?.button else { return }
         let dark = button.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-        guard description != lastDescription || dark != lastDark else { return }
+        guard meters != lastMeters || description != lastDescription || dark != lastDark else { return }
+        lastMeters = meters
         lastDark = dark
         lastDescription = description
         button.image = MenuBarSymbol.image(meters: meters, dark: dark)

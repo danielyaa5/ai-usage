@@ -2,21 +2,6 @@ import AppKit
 import AIUsageKit
 import SwiftUI
 
-struct MenuBarMeter: Equatable {
-    let provider: HistoryProvider
-    let percent: Int?
-
-    var shortName: String {
-        switch provider {
-        case .claude: return "Claude"
-        case .codex: return "GPT"
-        case .antigravity: return "Google"
-        }
-    }
-
-    var detail: String { percent.map { "\($0)% left" } ?? "No current quota" }
-}
-
 struct MenuBarLabel: View {
     @ObservedObject var model: AppModel
 
@@ -47,34 +32,39 @@ struct MenuBarSymbol: View {
         return ([sample ? "AI Usage, sample data" : "AI Usage"] + parts).joined(separator: ". ")
     }
 
+    private static func nsColor(_ rgb: MenuBarMeter.RGB) -> NSColor {
+        NSColor(srgbRed: rgb.red, green: rgb.green, blue: rgb.blue, alpha: 1)
+    }
+
     @MainActor static func image(meters: [MenuBarMeter], dark: Bool) -> NSImage {
-        let sage = NSColor(srgbRed: 161/255, green: 173/255, blue: 141/255, alpha: 1)
-        let forest = NSColor(srgbRed: 36/255, green: 49/255, blue: 32/255, alpha: 1)
-        let ink = dark ? sage : forest
-        let trackColor = dark ? forest : sage
         if meters.isEmpty {
             let mark = NSImage(named: dark ? "MenuMarkDark" : "MenuMarkLight")
             return mark ?? NSImage(systemSymbolName: "gauge.medium", accessibilityDescription: "AI Usage")!
         }
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 9.5, weight: .semibold), .foregroundColor: ink
-        ]
+        let font = NSFont.systemFont(ofSize: 9.5, weight: .semibold)
         let meterWidth: CGFloat = 40
         let spacing: CGFloat = 4
         let width = meterWidth * CGFloat(meters.count) + spacing * CGFloat(meters.count - 1)
         let result = NSImage(size: NSSize(width: width, height: 18), flipped: false) { _ in
             var x: CGFloat = 0
             for meter in meters {
+                let palette = meter.colors(dark: dark)
+                let ink = Self.nsColor(palette.ink)
+                let trackColor = Self.nsColor(palette.track)
+                let attrs: [NSAttributedString.Key: Any] = [
+                    .font: font, .foregroundColor: ink
+                ]
                 let label = meter.shortName as NSString
                 let labelX = x + (meterWidth - label.size(withAttributes: attrs).width) / 2
                 label.draw(at: CGPoint(x: labelX, y: 5), withAttributes: attrs)
-                if let percent = meter.percent {
+                if let remaining = meter.remainingPct {
                     trackColor.setFill()
                     let track = NSRect(x: x, y: 2, width: meterWidth, height: 3)
                     NSBezierPath(roundedRect: track, xRadius: 1.5, yRadius: 1.5).fill()
-                    if percent > 0 {
+                    let clamped = min(100, max(0, remaining))
+                    if clamped > 0 {
                         ink.setFill()
-                        let fill = NSRect(x: x, y: 2, width: max(1, meterWidth * CGFloat(percent) / 100), height: 3)
+                        let fill = NSRect(x: x, y: 2, width: max(1, meterWidth * CGFloat(clamped) / 100), height: 3)
                         NSBezierPath(roundedRect: fill, xRadius: 1.5, yRadius: 1.5).fill()
                     }
                 } else {
@@ -112,7 +102,9 @@ struct MenuBarSettings: View {
                         set: { model.setMeter(provider, enabled: $0) }))
                         .accessibilityIdentifier("menu-meter-" + provider.rawValue)
                     Spacer()
-                    Text(MenuBarMeter(provider: provider, percent: model.limits?.menuBarQuota(for: provider, at: Date())).detail)
+                    let meter = model.limits?.menuBarMeter(for: provider, at: Date())
+                        ?? MenuBarMeter(provider: provider, remainingPct: nil)
+                    Text(meter.detail)
                         .foregroundStyle(.secondary).font(.callout)
                 }
                 if provider != .antigravity { Divider() }

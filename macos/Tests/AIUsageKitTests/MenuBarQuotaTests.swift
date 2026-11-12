@@ -113,5 +113,71 @@ final class MenuBarQuotaTests: XCTestCase {
         XCTAssertNil(local.menuBarQuota(for: .claude, at: now.addingTimeInterval(46 * 60)))
         local.summary?.plans.removeAll { $0.vendor == "anthropic" }
         XCTAssertNil(local.menuBarQuota(for: .claude, at: now))
+        XCTAssertFalse(local.menuBarMeter(for: .claude, at: now).isRed)
+    }
+
+    func testMenuBarMeterTurnsRedStrictlyUnderTwentyPercent() {
+        for redValue in [0.0, 0.4, 1.0, 10.0, 19.0, 19.9, 19.99] {
+            let meter = MenuBarMeter(provider: .claude, remainingPct: redValue)
+            XCTAssertTrue(meter.isRed, "Expected \(redValue)% to be red (< 20%)")
+            let dark = meter.colors(dark: true)
+            let light = meter.colors(dark: false)
+            XCTAssertEqual(dark, MenuBarMeter.Colors(ink: MenuBarMeter.criticalDarkInk, track: MenuBarMeter.criticalDarkTrack))
+            XCTAssertEqual(light, MenuBarMeter.Colors(ink: MenuBarMeter.criticalLightInk, track: MenuBarMeter.criticalLightTrack))
+            XCTAssertGreaterThan(dark.ink.red, dark.ink.green)
+            XCTAssertGreaterThan(dark.track.red, dark.track.green)
+            XCTAssertGreaterThan(light.ink.red, light.ink.green)
+            XCTAssertGreaterThan(light.track.red, light.track.green)
+        }
+
+        for nonRedValue in [20.0, 20.1, 25.0, 30.0, 50.0, 100.0] {
+            let meter = MenuBarMeter(provider: .codex, remainingPct: nonRedValue)
+            XCTAssertFalse(meter.isRed, "Expected \(nonRedValue)% to stay non-red (>= 20%)")
+            XCTAssertEqual(meter.colors(dark: true), MenuBarMeter.Colors(ink: MenuBarMeter.sage, track: MenuBarMeter.forest))
+            XCTAssertEqual(meter.colors(dark: false), MenuBarMeter.Colors(ink: MenuBarMeter.forest, track: MenuBarMeter.sage))
+        }
+
+        let missing = MenuBarMeter(provider: .antigravity, remainingPct: nil)
+        XCTAssertFalse(missing.isRed)
+        XCTAssertEqual(missing.colors(dark: true), MenuBarMeter.Colors(ink: MenuBarMeter.sage, track: MenuBarMeter.forest))
+        XCTAssertEqual(missing.colors(dark: false), MenuBarMeter.Colors(ink: MenuBarMeter.forest, track: MenuBarMeter.sage))
+
+        // Widget/dashboard thresholds remain untouched (30% warning, 10% critical).
+        XCTAssertEqual(Level(leftPct: 19), .warning)
+        XCTAssertEqual(Level(leftPct: 10), .critical)
+        XCTAssertEqual(Level(leftPct: 30), .warning)
+        XCTAssertEqual(Level(leftPct: 31), .good)
+    }
+
+    func testReadingMenuBarMeterPreservesFractionalBoundaryUnderTwentyPercent() {
+        let reset = now.addingTimeInterval(3600)
+        func makeReading(leftPct: Double) -> Reading {
+            let plan = Plan(plan: "ChatGPT Pro", title: "ChatGPT Pro", short: "ChatGPT",
+                            vendor: "openai", monthlyUsd: 200, cost: 0, proratedUsd: nil,
+                            requests: 0, tokens: 0, windows: [
+                                LimitWindow(label: "Weekly", leftPct: leftPct, resetsAt: reset, observedAt: now)
+                            ])
+            let summary = UsageSummary(generatedAt: now, host: "This Mac", range: "7d", rangeLabel: "Last 7 days",
+                                       lastScan: now, plans: [plan],
+                                       totals: Totals(cost: 0, requests: 0, tokens: 0, output: 0,
+                                                      unpriced: 0, cacheShare: 0, backgroundCost: 0, topBackgroundJob: nil))
+            return Reading(summary: summary, fetchedAt: now, error: nil, server: SharedStore.localURL)
+        }
+
+        // 19.9% rounds to 20 for text display, but is strictly under 20% so the meter turns red.
+        let justUnder = makeReading(leftPct: 19.9).menuBarMeter(for: .codex, at: now)
+        XCTAssertEqual(justUnder.remainingPct, 19.9)
+        XCTAssertEqual(justUnder.percent, 20)
+        XCTAssertTrue(justUnder.isRed)
+
+        let exactTwenty = makeReading(leftPct: 20.0).menuBarMeter(for: .codex, at: now)
+        XCTAssertEqual(exactTwenty.remainingPct, 20.0)
+        XCTAssertEqual(exactTwenty.percent, 20)
+        XCTAssertFalse(exactTwenty.isRed)
+
+        let zero = makeReading(leftPct: 0.0).menuBarMeter(for: .codex, at: now)
+        XCTAssertEqual(zero.remainingPct, 0.0)
+        XCTAssertEqual(zero.percent, 0)
+        XCTAssertTrue(zero.isRed)
     }
 }
