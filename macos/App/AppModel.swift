@@ -3,8 +3,6 @@ import Foundation
 import WidgetKit
 import AIUsageKit
 
-enum SettingsPage { case connections, widgets, menuBar, advanced }
-
 /// Reads the dashboard on a timer, keeps the shared reading the widgets fall back on, and asks macOS to
 /// redraw the widgets when what they show has changed.
 @MainActor
@@ -18,7 +16,8 @@ final class AppModel: ObservableObject {
     @Published var settingsPage = SettingsPage.connections
     @Published var settingsProvider = HistoryProvider.claude
     @Published private(set) var setup: SetupJourney?
-    @Published var showsSetup = true
+    @Published var showsSetup = false
+    private var setupState: SetupState
     private let defaults: UserDefaults
     @Published private(set) var meterProviders: Set<HistoryProvider>
     @Published var showMenuBarIcon: Bool {
@@ -34,16 +33,35 @@ final class AppModel: ObservableObject {
 
     let local: LocalSources
 
+    var isConfigured: Bool {
+        SetupState.isSourceConfigured(
+            source: source,
+            hasLocalSources: local.hasSources,
+            hasDashboardServer: SharedStore.loadConfig().server != nil
+        )
+    }
+
     init(sampleSetup: Bool = false) {
         let config = sampleSetup ? SharedStore.Config() : SharedStore.loadConfig()
         let defaults = sampleSetup ? UserDefaults(suiteName: "store-preview-" + UUID().uuidString)! : .standard
         self.defaults = defaults
         showMenuBarIcon = defaults.object(forKey: "showMenuBarIcon") as? Bool ?? true
         meterProviders = Set((defaults.stringArray(forKey: "menuBarMeters") ?? []).compactMap(HistoryProvider.init(rawValue:)))
-        setup = SetupJourney.restore(defaults.data(forKey: "setupJourney"))
-        source = config.source
+        let initialSource = config.source
+        source = initialSource
         server = config.server ?? UsageClient.defaultServer
-        local = LocalSources(defaults: defaults)
+        let localSources = LocalSources(defaults: defaults)
+        local = localSources
+        let configured = SetupState.isSourceConfigured(
+            source: initialSource,
+            hasLocalSources: localSources.hasSources,
+            hasDashboardServer: config.server != nil
+        )
+        let state = SetupState(defaults: defaults, isConfigured: configured)
+        setupState = state
+        setup = state.journey
+        showsSetup = state.showsSetup
+        settingsPage = state.settingsPage
     }
 
     func setMeter(_ provider: HistoryProvider, enabled: Bool) {
@@ -63,39 +81,61 @@ final class AppModel: ObservableObject {
     }
 
     func prepareSetupIfNeeded() {
-        guard source == .local, setup == nil, !defaults.bool(forKey: "setupShown") else { return }
-        beginSetup()
+        setupState.prepareIfNeeded(source: source, isConfigured: isConfigured, defaults: defaults)
+        syncSetupState()
     }
 
     func beginSetup() {
         if source != .local { setSource(.local) }
         guard source == .local else { return }
-        showsSetup = true
-        saveSetup(SetupJourney())
+        setupState.begin(defaults: defaults)
+        syncSetupState()
     }
 
     func editSetup(_ edit: (inout SetupJourney) -> Void) {
-        guard var progress = setup else { return }
-        edit(&progress)
-        saveSetup(progress)
+        setupState.edit(edit, defaults: defaults)
+        syncSetupState()
     }
 
     func finishSetup(page: SettingsPage = .connections) {
         if let tool = setup?.tools.first { settingsProvider = tool }
-        showsSetup = false
-        saveSetup(nil)
-        settingsPage = page
+        setupState.finish(page: page, defaults: defaults)
+        syncSetupState()
         if source == .local, local.hasSources {
             reloadAfterSetup = true
             refresh(userInitiated: true)
         }
     }
 
-    private func saveSetup(_ progress: SetupJourney?) {
-        defaults.set(true, forKey: "setupShown")
-        if let progress, let data = try? JSONEncoder().encode(progress) { defaults.set(data, forKey: "setupJourney") }
-        else { defaults.removeObject(forKey: "setupJourney") }
-        setup = progress
+    func prepareSettingsPresentation(page: SettingsPage?, windowAlreadyOpen: Bool) {
+        setupState.settingsPage = settingsPage
+        setupState.showsSetup = showsSetup
+        setupState.preparePresentation(
+            requestedPage: page,
+            windowAlreadyOpen: windowAlreadyOpen,
+            source: source,
+            isConfigured: isConfigured,
+            defaults: defaults
+        )
+        syncSetupState()
+    }
+
+    func handleSettingsWindowClose() {
+        let firstTool = setup?.tools.first
+        if setupState.handleWindowClose(isConfigured: isConfigured, defaults: defaults) {
+            if let firstTool { settingsProvider = firstTool }
+            syncSetupState()
+            if source == .local, local.hasSources {
+                reloadAfterSetup = true
+                refresh(userInitiated: true)
+            }
+        }
+    }
+
+    private func syncSetupState() {
+        if setup != setupState.journey { setup = setupState.journey }
+        if showsSetup != setupState.showsSetup { showsSetup = setupState.showsSetup }
+        if settingsPage != setupState.settingsPage { settingsPage = setupState.settingsPage }
     }
     private var refreshAgain = false
     private var reloadAfterSetup = false

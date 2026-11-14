@@ -69,12 +69,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// aiusage://dashboard from a widget click opens the dashboard; aiusage://settings opens settings.
     func application(_ application: NSApplication, open urls: [URL]) {
         openedFromURL = true
-        for url in urls where url.scheme == AppLink.scheme {
-            if url.host == "refresh" {
+        let acceptedSchemes: Set<String> = [AppLink.scheme, "aiusage"]
+        for url in urls {
+            guard let route = AppURLRoute.resolve(url, acceptedSchemes: acceptedSchemes) else { continue }
+            switch route {
+            case .refresh:
                 model.refresh(userInitiated: true)
-            } else if url.host == "settings" {
-                SettingsWindow.show(model: model)
-            } else {
+            case .settings(let page):
+                SettingsWindow.show(model: model, page: page)
+            case .dashboard:
                 model.openDashboard()
             }
         }
@@ -87,9 +90,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return false
     }
 
-    #if CLAUDE_QUOTA_TEST
-    func applicationWillTerminate(_ notification: Notification) { ClaudeQuotaProcess.stopAll() }
-    #endif
+    func applicationWillTerminate(_ notification: Notification) {
+        model.handleSettingsWindowClose()
+        #if CLAUDE_QUOTA_TEST
+        ClaudeQuotaProcess.stopAll()
+        #endif
+    }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 }
@@ -108,6 +114,7 @@ enum LoginItem {
 final class SettingsWindow: NSObject, NSWindowDelegate {
     private static let controller = SettingsWindow()
     private var window: NSWindow?
+    private weak var activeModel: AppModel?
 
     static func show(model: AppModel, page: SettingsPage? = nil) {
         controller.present(model: model, page: page)
@@ -119,14 +126,8 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
     }
 
     private func present(model: AppModel, page: SettingsPage?) {
-        if let page {
-            model.showsSetup = false
-            model.settingsPage = page
-        } else if window == nil {
-            model.prepareSetupIfNeeded()
-            model.showsSetup = true
-            model.settingsPage = .connections
-        }
+        activeModel = model
+        model.prepareSettingsPresentation(page: page, windowAlreadyOpen: window != nil)
         if NSApp.activationPolicy() != .regular { NSApp.setActivationPolicy(.regular) }
         if window == nil {
             let hosting = NSHostingController(rootView: SettingsView(model: model))
@@ -146,6 +147,7 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
+        activeModel?.handleSettingsWindowClose()
         window?.contentViewController = nil
         window = nil
         NSApp.setActivationPolicy(.accessory)

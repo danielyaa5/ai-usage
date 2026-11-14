@@ -5,8 +5,18 @@ import AIUsageKit
 enum AppLink: String {
     case settings, dashboard, refresh
 
-    static let scheme = Bundle.main.object(forInfoDictionaryKey: "AIUsageURLScheme") as? String ?? "aiusage"
-    var url: URL { URL(string: Self.scheme + "://" + rawValue)! }
+    static func scheme(in bundle: Bundle = .main) -> String {
+        let configured = (bundle.object(forInfoDictionaryKey: "AIUsageURLScheme") as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let configured, !configured.isEmpty, !configured.contains("$(") {
+            return configured
+        }
+        return "aiusage"
+    }
+
+    static let scheme = scheme(in: .main)
+    func url(scheme: String = Self.scheme) -> URL { URL(string: scheme + "://" + rawValue)! }
+    var url: URL { url(scheme: Self.scheme) }
 }
 
 /// What every widget draws: the latest reading (fresh or cached), why a refresh failed, and which plan

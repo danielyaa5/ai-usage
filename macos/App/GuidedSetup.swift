@@ -102,6 +102,9 @@ struct SetupFooter: View {
                 Button("Set up later") { model.finishSetup() }.buttonStyle(.link)
             } else {
                 Button("Back") { model.editSetup { $0.back() } }
+                if journey.step == .connections, !local.hasSources {
+                    Button("Set up later") { model.finishSetup() }.buttonStyle(.link)
+                }
             }
             Spacer()
             switch journey.step {
@@ -109,6 +112,11 @@ struct SetupFooter: View {
                 Button("Continue") { model.editSetup { $0.advance() } }
                     .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction).disabled(journey.tools.isEmpty)
             case .connections:
+                if local.hasSources {
+                    Button("Done") { model.finishSetup(page: .widgets) }
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("setup-done")
+                }
                 if hasStartedConnection {
                     Button(journey.index + 1 < journey.tools.count ? "Next tool" : "Continue to widget") { model.editSetup { $0.advance() } }
                         .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
@@ -116,7 +124,8 @@ struct SetupFooter: View {
                     Button("Skip this tool for now") { model.editSetup { $0.advance() } }.buttonStyle(.bordered)
                 }
             case .widget:
-                Button("Done") { model.finishSetup() }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                Button("Done") { model.finishSetup(page: model.isConfigured ? .widgets : .connections) }
+                    .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
             }
         }.padding(.horizontal, 23).padding(.vertical, 12)
     }
