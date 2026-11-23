@@ -28,7 +28,7 @@ enum AntigravityQuotaError: String, Error {
 }
 
 /// Antigravity publishes one private hub_<httpPort>.json per local daemon. The app only uses
-/// the TLS port of a live, Google-signed server whose process token matches its registration.
+/// the TLS port of a live, Google-signed server whose launch arguments agree with its registration.
 private struct AntigravityHub: Decodable, Equatable, Sendable {
     let pid: Int32
     let httpPort: UInt16
@@ -72,36 +72,17 @@ private struct AntigravityHub: Decodable, Equatable, Sendable {
         guard argc > 0, argc <= 8192, let nul = bytes[4..<length].firstIndex(of: 0) else { return false }
         var index = nul
         while index < length && bytes[index] == 0 { index += 1 }
-        // A zero port asks the OS to allocate one; the private hub file publishes that
-        // resulting port. If Google supplied an explicit port, it must match as well.
-        var pending: String?
-        var tokenMatches = false
-        let fields = ["--csrf_token", "--https_server_port", "--http_server_port"]
+        // Use index ranges, not slices, so nothing else holds the buffer when it is wiped.
+        var ranges: [Range<Int>] = []
         for _ in 0..<argc {
             guard index < length, let end = bytes[index..<length].firstIndex(of: 0) else { return false }
-            let arg = bytes[index..<end]
+            ranges.append(index..<end)
             index = end + 1
-            let field: String
-            let value: ArraySlice<UInt8>
-            if let wanted = pending {
-                field = wanted; value = arg; pending = nil
-            } else {
-                guard arg.starts(with: [45, 45]) else { continue }
-                let sep = arg.firstIndex(of: 61) ?? end
-                let name = String(decoding: arg[..<sep], as: UTF8.self)
-                guard fields.contains(name) else { continue }
-                if sep == end { pending = name; continue }
-                field = name; value = arg[(sep + 1)..<end]
-            }
-            if field == "--csrf_token" {
-                guard value.elementsEqual(csrfToken.utf8) else { return false }
-                tokenMatches = true
-            } else {
-                guard let port = UInt16(String(decoding: value, as: UTF8.self)),
-                      port == 0 || port == (field == "--https_server_port" ? httpsPort : httpPort) else { return false }
-            }
         }
-        return tokenMatches && pending == nil
+        return bytes.withUnsafeBufferPointer { buffer in
+            AntigravityQuota.launchArgumentsMatch(ranges.map { buffer[$0] }, csrfToken: csrfToken,
+                                                  httpsPort: httpsPort, httpPort: httpPort)
+        }
     }
 
     func signedExecutable() -> GoogleExecutable? {

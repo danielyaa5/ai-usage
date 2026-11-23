@@ -47,4 +47,28 @@ final class AntigravityQuotaTests: XCTestCase {
         XCTAssertEqual(try AntigravityQuota.windows(in: Data("{}".utf8), at: now), [])
         XCTAssertThrowsError(try AntigravityQuota.windows(in: Data("invalid".utf8), at: now))
     }
+
+    private func argsMatch(_ args: [String], token: String = "fictional-token-0123456789") -> Bool {
+        AntigravityQuota.launchArgumentsMatch(args.map { Array($0.utf8) }, csrfToken: token,
+                                              httpsPort: 50001, httpPort: 50002)
+    }
+
+    func testLaunchArgumentsAcceptBuildsThatKeepTheTokenOffTheCommandLine() {
+        // Antigravity 2.34 publishes its token only in the hub file.
+        XCTAssertTrue(argsMatch(["/Applications/Antigravity.app/Contents/Resources/bin/language_server",
+                                 "--standalone", "--subclient_type", "hub", "--https_server_port", "0",
+                                 "--host_bridge_url=http://127.0.0.1:50000", "--read_host_bridge_token_from_stdin"]))
+        XCTAssertTrue(argsMatch(["language_server", "--https_server_port=50001", "--http_server_port", "50002"]))
+    }
+
+    func testLaunchArgumentsStillCheckATokenOrPortGivenOnTheCommandLine() {
+        XCTAssertTrue(argsMatch(["language_server", "--csrf_token", "fictional-token-0123456789",
+                                 "--https_server_port", "0"]))
+        XCTAssertTrue(argsMatch(["language_server", "--csrf_token=fictional-token-0123456789"]))
+        XCTAssertFalse(argsMatch(["language_server", "--csrf_token", "some-other-token-0123456789"]))
+        XCTAssertFalse(argsMatch(["language_server", "--csrf_token=fictional-token-01234567890"]))
+        XCTAssertFalse(argsMatch(["language_server", "--https_server_port", "50009"]))
+        XCTAssertFalse(argsMatch(["language_server", "--http_server_port=abc"]))
+        XCTAssertFalse(argsMatch(["language_server", "--https_server_port"]), "a flag with no value")
+    }
 }

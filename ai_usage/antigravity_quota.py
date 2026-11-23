@@ -1,18 +1,22 @@
 """Antigravity plan limits from the running Antigravity app's local language server.
 
 The Antigravity app (and each `agy` run) starts a `language_server` that serves a Connect API on a
-loopback port, guarded by a per-process CSRF token passed on its command line. Its
+loopback port, guarded by a per-process CSRF token. Builds before 2.34 pass the token on the command
+line; from 2.34 the server makes its own and publishes it only in an owner-only
+`~/.gemini/antigravity/daemon/hub_<port>.json` file next to its pid. Its
 `RetrieveUserQuotaSummary` method returns the same quota groups the app shows: for each model
 group (Gemini; Claude and GPT-OSS) a 5-hour and a weekly bucket with the fraction remaining and
 the reset time. `GetUserStatus` names the subscription tier.
 
-The token is read from the process list at poll time, held only in memory and sent only to that
+The token is read from the process list (or that hub file) at poll time, held only in memory and sent only to that
 process's own loopback port. No Google credentials are read, and nothing personal from the
 responses (name, email) is stored. Polling costs no model usage.
 """
 import json
+import os
 import re
 import ssl
+import stat
 import subprocess
 import time
 import urllib.error
@@ -23,17 +27,52 @@ from .store import get_kv, put_limit, set_kv
 
 SERVICE = 'exa.language_server_pb.LanguageServerService'
 TOKEN = re.compile(r'--csrf_token[= ](\S+)')
+HUB_DIR = '~/.gemini/antigravity/daemon'
+HUB_NAME = re.compile(r'hub_\d+\.json')
 TIMEOUT = 15
 INSECURE = ssl.create_default_context()
 INSECURE.check_hostname = False
 INSECURE.verify_mode = ssl.CERT_NONE  # the language server uses a self-signed loopback certificate
 
 
-def servers(ps_output=None):
-    """[(pid, csrf token)] for running Antigravity language servers, the app's own first."""
+def hub_tokens(directory=HUB_DIR):
+    """{pid: csrf token} from Antigravity's hub files, which only this user may read or write."""
+    directory = os.path.expanduser(directory)
+    tokens = {}
+    try:
+        names = os.listdir(directory)
+    except OSError:
+        return tokens
+    for name in names:
+        if not HUB_NAME.fullmatch(name):
+            continue
+        try:
+            info = os.lstat(os.path.join(directory, name))
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077
+                    or info.st_size > 4096):
+                continue
+            with open(os.path.join(directory, name), encoding='utf-8') as file:
+                hub = json.load(file)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(hub, dict):
+            continue
+        pid, token = hub.get('pid'), hub.get('csrfToken')
+        if isinstance(pid, int) and pid > 0 and isinstance(token, str) and re.fullmatch(r'[!-~]{16,256}', token):
+            tokens[pid] = token
+    return tokens
+
+
+def servers(ps_output=None, hubs=None):
+    """[(pid, csrf token)] for running Antigravity language servers, the app's own first.
+
+    A token on the command line wins; otherwise the server's hub file supplies it (2.34+)."""
     if ps_output is None:
         ps_output = subprocess.run(['ps', '-axww', '-o', 'pid=,command='], capture_output=True, text=True,
                                    timeout=10).stdout
+        if hubs is None:
+            hubs = hub_tokens()
+    hubs = hubs or {}
     found = []
     for line in ps_output.splitlines():
         pid, _, command = line.strip().partition(' ')
@@ -42,8 +81,9 @@ def servers(ps_output=None):
         if 'Antigravity.app' not in command and '.gemini/antigravity' not in command:
             continue
         match = TOKEN.search(command)
-        if match:
-            found.append((int(pid), match.group(1), 'Antigravity.app' in command))
+        token = match.group(1) if match else hubs.get(int(pid))
+        if token:
+            found.append((int(pid), token, 'Antigravity.app' in command))
     found.sort(key=lambda s: not s[2])
     return [(pid, token) for pid, token, _ in found]
 

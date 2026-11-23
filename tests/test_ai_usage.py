@@ -351,6 +351,26 @@ class AntigravityQuotaTest(Base):
               '  8000 /usr/bin/other_language_server --csrf_token nope\n')
         self.assertEqual(antigravity_quota.servers(ps), [(9411, 'abc-123'), (7000, 'cli-9')])
 
+    def test_takes_token_from_hub_file_when_command_line_has_none(self):
+        # Antigravity 2.34 keeps the token off the command line and writes it to hub_<port>.json.
+        ps = ('  9442 /Applications/Antigravity.app/Contents/Resources/bin/language_server --standalone --https_server_port 0\n'
+              '  9411 /Applications/Antigravity.app/Contents/Resources/bin/language_server --csrf_token abc-123\n')
+        self.assertEqual(antigravity_quota.servers(ps, {9442: 'hub-token-0123456789', 9411: 'ignored'}),
+                         [(9442, 'hub-token-0123456789'), (9411, 'abc-123')])
+        with tempfile.TemporaryDirectory() as d:
+            good = os.path.join(d, 'hub_50002.json')
+            with open(good, 'w') as f:
+                json.dump({'pid': 9442, 'httpsPort': 50001, 'httpPort': 50002, 'csrfToken': 'hub-token-0123456789'}, f)
+            os.chmod(good, 0o600)
+            shared = os.path.join(d, 'hub_50004.json')
+            with open(shared, 'w') as f:
+                json.dump({'pid': 9443, 'csrfToken': 'shared-token-0123456789'}, f)
+            os.chmod(shared, 0o644)
+            with open(os.path.join(d, 'other.json'), 'w') as f:
+                json.dump({'pid': 9444, 'csrfToken': 'other-token-0123456789'}, f)
+            self.assertEqual(antigravity_quota.hub_tokens(d), {9442: 'hub-token-0123456789'})
+        self.assertEqual(antigravity_quota.hub_tokens(os.path.join(tempfile.gettempdir(), 'missing-hub-dir')), {})
+
     def test_records_buckets_as_limits(self):
         self.assertEqual(antigravity_quota.record(self.db, self.SUMMARY, 'Google AI Ultra'), 3)
         limits = [l for l in report.limits(self.db) if l['vendor'] == 'google']
