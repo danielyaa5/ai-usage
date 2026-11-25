@@ -112,7 +112,10 @@ final class ChatGPTAccount {
     func limits() async throws -> [LimitWindow] {
         let client = try await start()
         do {
-            let reply = try await client.request("account/rateLimits/read", params: [:])
+            // Renews the sign-in once if a plan change or revoked session expired it.
+            let reply = try await ChatGPTSignIn.readLimits { method, params in
+                try await client.request(method, params: params)
+            }
             let windows = Self.windows(reply, at: Date())
             _ = await client.stop()
             return windows
